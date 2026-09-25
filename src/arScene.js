@@ -93,27 +93,34 @@ export class ARScene {
       domOverlay: { root: this.overlayEl },
     });
 
+    this.placed = false;
+    this.hitTestSource = null;
+    this.hitTestSourceRequested = false;
+    this._glBinding = null;
+    this._captureRequested = false;
+    this.reticle.visible = false;
+    if (this.modelGroup) this.modelGroup.visible = false;
+
     document.body.appendChild(this.renderer.domElement);
     // three.js defaults to 'local-floor', which many phones reject; 'local' is
     // guaranteed for immersive sessions and hit-test gives us the floor anyway.
     this.renderer.xr.setReferenceSpaceType("local");
+    // Must be set before setSession: three.js stops its window rAF loop on
+    // 'sessionstart', but setAnimationLoop() restarts it. Set afterwards, the
+    // callback also ran on window frames with no XRFrame, and a capture landing
+    // on one of those failed with no pose.
+    this.renderer.setAnimationLoop((timestamp, frame) => this._tick(timestamp, frame));
     try {
       await this.renderer.xr.setSession(session);
     } catch (err) {
       // Don't leave a half-started session holding the camera with a black screen.
+      this.renderer.setAnimationLoop(null);
       await session.end().catch(() => {});
       if (this.renderer.domElement.parentNode) {
         this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
       }
       throw err;
     }
-
-    this.placed = false;
-    this.hitTestSource = null;
-    this.hitTestSourceRequested = false;
-    this._glBinding = null;
-    this.reticle.visible = false;
-    if (this.modelGroup) this.modelGroup.visible = false;
 
     this.overlayEl.addEventListener("touchstart", this._boundTouchStart, { passive: false });
     this.overlayEl.addEventListener("touchmove", this._boundTouchMove, { passive: false });
@@ -123,7 +130,6 @@ export class ARScene {
 
     session.addEventListener("end", () => this._onSessionEnd());
 
-    this.renderer.setAnimationLoop((timestamp, frame) => this._tick(timestamp, frame));
     this.session = session;
   }
 
@@ -143,6 +149,11 @@ export class ARScene {
       this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
     }
     this.session = null;
+    if (this._onCaptured) {
+      this._onCaptured({ ok: false, error: new Error("AR이 종료되었어요.") });
+      this._onCaptured = null;
+    }
+    this._captureRequested = false;
     if (this.onSessionEnd) this.onSessionEnd();
   }
 
@@ -161,33 +172,32 @@ export class ARScene {
   }
 
   _tick(timestamp, frame) {
-    if (frame) {
-      const referenceSpace = this.renderer.xr.getReferenceSpace();
-      const session = this.renderer.xr.getSession();
+    // This scene only exists inside the AR session; non-XR ticks (e.g. the
+    // moment before the session starts) have nothing to draw or capture.
+    if (!frame) return;
 
-      if (!this.hitTestSourceRequested) {
-        this.hitTestSourceRequested = true;
-        session.requestReferenceSpace("viewer").then((viewerSpace) => {
-          session.requestHitTestSource({ space: viewerSpace }).then((source) => {
-            this.hitTestSource = source;
-          });
+    const referenceSpace = this.renderer.xr.getReferenceSpace();
+    const session = this.renderer.xr.getSession();
+
+    if (!this.hitTestSourceRequested) {
+      this.hitTestSourceRequested = true;
+      session.requestReferenceSpace("viewer").then((viewerSpace) => {
+        session.requestHitTestSource({ space: viewerSpace }).then((source) => {
+          this.hitTestSource = source;
         });
-      }
+      });
+    }
 
-      if (this.hitTestSource && !this.placed) {
-        const hits = frame.getHitTestResults(this.hitTestSource);
-        if (hits.length > 0) {
-          const pose = hits[0].getPose(referenceSpace);
-          this.reticle.visible = true;
-          this.reticle.matrix.fromArray(pose.transform.matrix);
-          this._lastHitPose = pose;
-        } else {
-          this.reticle.visible = false;
-          this._lastHitPose = null;
-        }
+    if (this.hitTestSource && !this.placed) {
+      const hits = frame.getHitTestResults(this.hitTestSource);
+      if (hits.length > 0) {
+        this.reticle.visible = true;
+        this.reticle.matrix.fromArray(hits[0].getPose(referenceSpace).transform.matrix);
       } else {
         this.reticle.visible = false;
       }
+    } else {
+      this.reticle.visible = false;
     }
 
     this.renderer.render(this.scene, this.camera);
