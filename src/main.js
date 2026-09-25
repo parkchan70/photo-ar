@@ -163,49 +163,99 @@ resetBtn.addEventListener("click", () => {
   if (arScene) arScene.resetPlacement();
 });
 
+// Taps on our buttons shouldn't also count as an AR "select" (which would
+// re-place the model right after pressing ↺, for example).
+arOverlay.addEventListener("beforexrselect", (e) => {
+  if (e.target.closest("#arControls, .ar-ui")) e.preventDefault();
+});
+
+// ---------- Capture ----------
+const captureSheet = $("captureSheet");
+const captureImg = $("captureImg");
+const saveShotBtn = $("saveShotBtn");
+const shareShotBtn = $("shareShotBtn");
+const closeShotBtn = $("closeShotBtn");
+const arToast = $("arToast");
+
+let lastShot = null; // { file, url }
+let toastTimer = null;
+
+function showToast(text, ms = 3500) {
+  arToast.textContent = text;
+  arToast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (arToast.hidden = true), ms);
+}
+
 captureBtn.addEventListener("click", async () => {
   if (!arScene) return;
-  const result = await arScene.requestCapture();
-  if (result.ok) {
-    showCapturePreview(result.dataUrl);
-  } else {
-    alert("캡처에 실패했어요: " + (result.error?.message || result.error));
+  captureBtn.disabled = true;
+  try {
+    const result = await arScene.requestCapture();
+    if (!result.ok) {
+      showToast(
+        result.error?.message === "NO_CAMERA_ACCESS"
+          ? "이 폰에서는 AR 사진 저장이 지원되지 않아요. 폰의 스크린샷 기능(전원+볼륨 아래)을 이용해주세요."
+          : "캡처에 실패했어요: " + (result.error?.message || result.error),
+        6000
+      );
+      return;
+    }
+    const blob = await pixelsToJpeg(result);
+    if (lastShot) URL.revokeObjectURL(lastShot.url);
+    const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+    lastShot = {
+      file: new File([blob], `photo-ar-${stamp}.jpg`, { type: "image/jpeg" }),
+      url: URL.createObjectURL(blob),
+    };
+    captureImg.src = lastShot.url;
+    shareShotBtn.hidden = !(navigator.canShare && navigator.canShare({ files: [lastShot.file] }));
+    captureSheet.hidden = false;
+  } catch (err) {
+    console.error(err);
+    showToast("캡처에 실패했어요: " + (err?.message || err), 6000);
+  } finally {
+    captureBtn.disabled = false;
   }
 });
 
-function showCapturePreview(dataUrl) {
-  const overlay = document.createElement("div");
-  overlay.style.cssText =
-    "position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:50;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:20px;";
-
-  const img = document.createElement("img");
-  img.src = dataUrl;
-  img.style.cssText = "max-width:90%;max-height:70%;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.5);";
-
-  const hint = document.createElement("p");
-  hint.textContent = "이미지를 길게 눌러 저장하거나, 아래 버튼으로 다운로드하세요.";
-  hint.style.cssText = "color:#fff;font-size:13px;text-align:center;margin:0;";
-
-  const row = document.createElement("div");
-  row.style.cssText = "display:flex;gap:12px;";
-
-  const saveBtn = document.createElement("a");
-  saveBtn.href = dataUrl;
-  saveBtn.download = `ar-capture-${Date.now()}.png`;
-  saveBtn.textContent = "다운로드";
-  saveBtn.style.cssText =
-    "background:#6d8cff;color:#fff;padding:10px 20px;border-radius:10px;text-decoration:none;font-weight:600;";
-
-  const closeBtn = document.createElement("button");
-  closeBtn.textContent = "닫기";
-  closeBtn.style.cssText =
-    "background:rgba(255,255,255,0.15);color:#fff;padding:10px 20px;border-radius:10px;border:none;font-weight:600;";
-  closeBtn.onclick = () => overlay.remove();
-
-  row.appendChild(saveBtn);
-  row.appendChild(closeBtn);
-  overlay.appendChild(img);
-  overlay.appendChild(hint);
-  overlay.appendChild(row);
-  document.body.appendChild(overlay);
+function pixelsToJpeg({ pixels, width, height }) {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  const image = ctx.createImageData(width, height);
+  const row = width * 4;
+  for (let y = 0; y < height; y++) {
+    // WebGL rows come bottom-up.
+    image.data.set(pixels.subarray((height - 1 - y) * row, (height - y) * row), y * row);
+  }
+  ctx.putImageData(image, 0, 0);
+  return new Promise((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("이미지 변환 실패"))), "image/jpeg", 0.92)
+  );
 }
+
+saveShotBtn.addEventListener("click", () => {
+  if (!lastShot) return;
+  const a = document.createElement("a");
+  a.href = lastShot.url;
+  a.download = lastShot.file.name;
+  arOverlay.appendChild(a);
+  a.click();
+  a.remove();
+  showToast("저장을 시작했어요. 알림창이나 '내 파일 → 다운로드'에서 확인할 수 있어요.");
+});
+
+shareShotBtn.addEventListener("click", async () => {
+  if (!lastShot) return;
+  try {
+    await navigator.share({ files: [lastShot.file] });
+  } catch (err) {
+    if (err?.name !== "AbortError") showToast("공유하지 못했어요: " + (err?.message || err));
+  }
+});
+
+closeShotBtn.addEventListener("click", () => {
+  captureSheet.hidden = true;
+});

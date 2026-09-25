@@ -53,6 +53,7 @@ export class ARScene {
 
     this._captureRequested = false;
     this._onCaptured = null;
+    this._setupCapture();
 
     this._boundOnSelect = this._onSelect.bind(this);
     this._boundTouchStart = this._onTouchStart.bind(this);
@@ -78,7 +79,8 @@ export class ARScene {
   async start() {
     const session = await navigator.xr.requestSession("immersive-ar", {
       requiredFeatures: ["hit-test"],
-      optionalFeatures: ["dom-overlay"],
+      // camera-access lets capture include the real room behind the model.
+      optionalFeatures: ["dom-overlay", "camera-access"],
       domOverlay: { root: this.overlayEl },
     });
 
@@ -100,6 +102,7 @@ export class ARScene {
     this.placed = false;
     this.hitTestSource = null;
     this.hitTestSourceRequested = false;
+    this._glBinding = null;
     this.reticle.visible = false;
     if (this.modelGroup) this.modelGroup.visible = false;
 
@@ -182,13 +185,107 @@ export class ARScene {
 
     if (this._captureRequested) {
       this._captureRequested = false;
+      let result;
       try {
-        const dataUrl = this.renderer.domElement.toDataURL("image/png");
-        if (this._onCaptured) this._onCaptured({ ok: true, dataUrl });
+        result = { ok: true, ...this._captureFrame(frame) };
       } catch (err) {
-        if (this._onCaptured) this._onCaptured({ ok: false, error: err });
+        result = { ok: false, error: err };
       }
+      if (this._onCaptured) this._onCaptured(result);
       this._onCaptured = null;
+    }
+  }
+
+  _setupCapture() {
+    // An empty Texture (version 0) makes three.js bind whatever GL texture we
+    // put in its properties, so the XR camera image can feed a normal material.
+    this._camTexture = new THREE.Texture();
+    const bgMaterial = new THREE.ShaderMaterial({
+      uniforms: { map: { value: this._camTexture } },
+      vertexShader: /* glsl */ `
+        varying vec2 vUv;
+        void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+      // Camera bytes are sRGB; the sRGB render target re-encodes on write,
+      // so decode here to avoid a washed-out background.
+      fragmentShader: /* glsl */ `
+        uniform sampler2D map;
+        varying vec2 vUv;
+        void main() {
+          vec3 c = texture2D(map, vUv).rgb;
+          c = mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));
+          gl_FragColor = vec4(c, 1.0);
+        }`,
+      depthTest: false,
+      depthWrite: false,
+    });
+    const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), bgMaterial);
+    quad.frustumCulled = false;
+    this._bgScene = new THREE.Scene();
+    this._bgScene.add(quad);
+    this._bgCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+    this._capCamera = new THREE.PerspectiveCamera();
+    this._capCamera.matrixAutoUpdate = false;
+    this._capTarget = null;
+  }
+
+  /**
+   * Renders camera image + scene into an offscreen sRGB target and reads it
+   * back. Must run inside the XR frame: the camera texture is only valid then.
+   * @returns {{pixels: Uint8Array, width: number, height: number}} bottom-up rows
+   */
+  _captureFrame(frame) {
+    const renderer = this.renderer;
+    const session = renderer.xr.getSession();
+    const pose = frame && frame.getViewerPose(renderer.xr.getReferenceSpace());
+    const view = pose && pose.views.find((v) => v.camera);
+    if (!view || typeof XRWebGLBinding === "undefined") {
+      throw new Error("NO_CAMERA_ACCESS");
+    }
+
+    const gl = renderer.getContext();
+    if (!this._glBinding) this._glBinding = new XRWebGLBinding(session, gl);
+    renderer.state.unbindTexture();
+    const glTexture = this._glBinding.getCameraImage(view.camera);
+    if (!glTexture) throw new Error("NO_CAMERA_ACCESS");
+    renderer.properties.get(this._camTexture).__webglTexture = glTexture;
+
+    const width = view.camera.width;
+    const height = view.camera.height;
+    if (!this._capTarget || this._capTarget.width !== width || this._capTarget.height !== height) {
+      this._capTarget?.dispose();
+      this._capTarget = new THREE.WebGLRenderTarget(width, height);
+      this._capTarget.texture.colorSpace = THREE.SRGBColorSpace;
+    }
+
+    const cam = this._capCamera;
+    cam.matrix.fromArray(view.transform.matrix);
+    cam.updateMatrixWorld(true);
+    cam.projectionMatrix.fromArray(view.projectionMatrix);
+    cam.projectionMatrixInverse.copy(cam.projectionMatrix).invert();
+
+    const prevTarget = renderer.getRenderTarget();
+    const prevAutoClear = renderer.autoClear;
+    const reticleWasVisible = this.reticle.visible;
+    // With xr.enabled the renderer swaps in the XR camera and framebuffer;
+    // turn it off briefly (three.js's own CubeCamera does the same).
+    renderer.xr.enabled = false;
+    this.reticle.visible = false;
+    try {
+      renderer.setRenderTarget(this._capTarget);
+      renderer.autoClear = false;
+      renderer.clear();
+      renderer.render(this._bgScene, this._bgCamera);
+      renderer.clearDepth();
+      renderer.render(this.scene, cam);
+      const pixels = new Uint8Array(width * height * 4);
+      renderer.readRenderTargetPixels(this._capTarget, 0, 0, width, height, pixels);
+      return { pixels, width, height };
+    } finally {
+      renderer.xr.enabled = true;
+      renderer.autoClear = prevAutoClear;
+      renderer.setRenderTarget(prevTarget);
+      this.reticle.visible = reticleWasVisible;
     }
   }
 
@@ -210,7 +307,7 @@ export class ARScene {
   _touchListFromEvent(e) {
     return Array.from(e.touches).filter((t) => {
       const el = document.elementFromPoint(t.clientX, t.clientY);
-      return !el || !el.closest("#arControls");
+      return !el || !el.closest("#arControls, .ar-ui");
     });
   }
 

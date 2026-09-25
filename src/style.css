@@ -9,6 +9,9 @@
 
 * { box-sizing: border-box; }
 
+/* Elements styled with display:flex would otherwise ignore the hidden attribute. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   padding: 0;
@@ -130,6 +133,8 @@ header p { margin: 0 0 20px; color: var(--muted); font-size: 14px; line-height: 
 #arControls {
   pointer-events: auto;
   align-self: center;
+  margin-top: auto;
+  margin-bottom: 16px;
   display: flex;
   gap: 18px;
   background: rgba(0,0,0,0.45);
@@ -147,3 +152,49 @@ header p { margin: 0 0 20px; color: var(--muted); font-size: 14px; line-height: 
   cursor: pointer;
 }
 #arControls button:active { background: rgba(255,255,255,0.35); }
+#arControls button:disabled { opacity: 0.4; }
+
+.ar-toast {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 96px);
+  margin: 0;
+  background: rgba(0,0,0,0.75);
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.capture-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: rgba(0,0,0,0.85);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 20px 16px;
+}
+.capture-sheet img {
+  max-width: 100%;
+  max-height: 70vh;
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+}
+.sheet-actions { display: flex; gap: 10px; }
+.sheet-actions button {
+  min-width: 84px;
+  padding: 12px 18px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.15);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+}
+.sheet-actions .sheet-primary { background: var(--accent); }
