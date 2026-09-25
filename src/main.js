@@ -153,6 +153,8 @@ goArBtn.addEventListener("click", async () => {
 function exitArUI() {
   arScreenEl.classList.remove("active");
   setupScreen.classList.add("active");
+  captureSheet.hidden = true;
+  shotThumb.hidden = true;
   if (modelGroup) {
     modelGroup.position.set(0, 0, 0);
     modelGroup.rotation.set(0, 0, 0);
@@ -190,24 +192,44 @@ arOverlay.addEventListener("beforexrselect", (e) => {
 // ---------- Capture ----------
 const captureSheet = $("captureSheet");
 const captureImg = $("captureImg");
-const saveShotBtn = $("saveShotBtn");
 const shareShotBtn = $("shareShotBtn");
 const closeShotBtn = $("closeShotBtn");
 const arToast = $("arToast");
+const shutterFlash = $("shutterFlash");
+const shotThumb = $("shotThumb");
+const shotThumbImg = $("shotThumbImg");
 
 let lastShot = null; // { file, url }
 let toastTimer = null;
 
-function showToast(text, ms = 3500) {
+function showToast(text, ms = 3500, { success = false } = {}) {
   arToast.textContent = text;
+  arToast.classList.toggle("success", success);
   arToast.hidden = false;
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => (arToast.hidden = true), ms);
 }
 
+function restartAnimation(el, cls) {
+  el.classList.remove(cls);
+  void el.offsetWidth; // reflow so the same animation can play again
+  el.classList.add(cls);
+}
+
+function saveToDevice(shot) {
+  const a = document.createElement("a");
+  a.href = shot.url;
+  a.download = shot.file.name;
+  arOverlay.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 captureBtn.addEventListener("click", async () => {
   if (!arScene) return;
   captureBtn.disabled = true;
+  // The flash is DOM-only, so it never ends up in the captured image.
+  restartAnimation(shutterFlash, "go");
   try {
     const result = await arScene.requestCapture();
     if (!result.ok) {
@@ -227,9 +249,15 @@ captureBtn.addEventListener("click", async () => {
       file: new File([blob], `photo-ar-${stamp}.jpg`, { type: "image/jpeg" }),
       url: URL.createObjectURL(blob),
     };
+    // Still inside the tap's user-activation window, so Chrome allows the download.
+    saveToDevice(lastShot);
+
     captureImg.src = lastShot.url;
+    shotThumbImg.src = lastShot.url;
+    shotThumb.hidden = false;
+    restartAnimation(shotThumb, "pop");
     shareShotBtn.hidden = !(navigator.canShare && navigator.canShare({ files: [lastShot.file] }));
-    captureSheet.hidden = false;
+    showToast("✓ 사진을 저장했어요 (갤러리 → Download 앨범)", 3000, { success: true });
   } catch (err) {
     console.error(err);
     showToast("캡처에 실패했어요: " + (err?.message || err), 6000);
@@ -255,15 +283,8 @@ function pixelsToJpeg({ pixels, width, height }) {
   );
 }
 
-saveShotBtn.addEventListener("click", () => {
-  if (!lastShot) return;
-  const a = document.createElement("a");
-  a.href = lastShot.url;
-  a.download = lastShot.file.name;
-  arOverlay.appendChild(a);
-  a.click();
-  a.remove();
-  showToast("저장을 시작했어요. 알림창이나 '내 파일 → 다운로드'에서 확인할 수 있어요.");
+shotThumb.addEventListener("click", () => {
+  if (lastShot) captureSheet.hidden = false;
 });
 
 shareShotBtn.addEventListener("click", async () => {

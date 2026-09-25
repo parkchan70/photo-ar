@@ -63,11 +63,15 @@
           <button id="exitArBtn" title="종료">✕</button>
         </div>
         <p id="arToast" class="ar-ui ar-toast" hidden></p>
+        <div id="shutterFlash" class="shutter-flash"></div>
+        <button id="shotThumb" class="ar-ui shot-thumb" title="방금 찍은 사진" hidden>
+          <img id="shotThumbImg" alt="방금 찍은 사진" />
+        </button>
         <div id="captureSheet" class="ar-ui capture-sheet" hidden>
           <img id="captureImg" alt="AR 캡처 사진" />
+          <p class="sheet-note">✓ 휴대폰에 저장된 사진이에요</p>
           <div class="sheet-actions">
-            <button id="saveShotBtn" class="sheet-primary">저장</button>
-            <button id="shareShotBtn">공유</button>
+            <button id="shareShotBtn" class="sheet-primary">공유</button>
             <button id="closeShotBtn">닫기</button>
           </div>
         </div>
