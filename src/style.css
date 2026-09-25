@@ -115,6 +115,7 @@ header p { margin: 0 0 20px; color: var(--muted); font-size: 14px; line-height: 
   /* auto (not none): the overlay itself must receive touches so ARScene can
      read 1-finger drag / 2-finger rotate+pinch gestures for the placed model. */
   pointer-events: auto;
+  touch-action: none; /* our gestures, not browser pan/zoom */
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -130,10 +131,30 @@ header p { margin: 0 0 20px; color: var(--muted); font-size: 14px; line-height: 
   font-size: 13px;
 }
 
+.mode-toggle {
+  align-self: center;
+  margin-top: auto;
+  display: flex;
+  background: rgba(0,0,0,0.5);
+  border-radius: 24px;
+  padding: 4px;
+  gap: 4px;
+}
+.mode-toggle button {
+  border: none;
+  border-radius: 20px;
+  padding: 10px 18px;
+  background: transparent;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+}
+.mode-toggle button.active { background: var(--accent); }
+
 #arControls {
   pointer-events: auto;
   align-self: center;
-  margin-top: auto;
+  margin-top: 10px;
   margin-bottom: 16px;
   display: flex;
   gap: 18px;
@@ -155,10 +176,11 @@ header p { margin: 0 0 20px; color: var(--muted); font-size: 14px; line-height: 
 #arControls button:disabled { opacity: 0.4; }
 
 .ar-toast {
+  pointer-events: none;
   position: fixed;
   left: 16px;
   right: 16px;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 96px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 160px);
   margin: 0;
   background: rgba(0,0,0,0.75);
   padding: 12px 14px;

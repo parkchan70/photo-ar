@@ -25,6 +25,7 @@ const arControls = $("arControls");
 const captureBtn = $("captureBtn");
 const resetBtn = $("resetBtn");
 const exitArBtn = $("exitArBtn");
+const modeToggle = $("modeToggle");
 
 let sourceImage = null; // HTMLImageElement
 let segmentation = null; // {mask, width, height}
@@ -48,6 +49,10 @@ function getArScene() {
       onPlacementChanged: (isPlaced) => {
         arHint.hidden = isPlaced;
         arControls.hidden = !isPlaced;
+        modeToggle.hidden = !isPlaced;
+        if (isPlaced) {
+          showToast("한 손가락으로 끌면 이동, '회전'을 누르고 좌우로 밀면 돌아가요. 두 손가락을 벌리거나 오므리면 크기가 바뀌어요.", 5000);
+        }
       },
       onSessionEnd: () => {
         exitArUI();
@@ -133,6 +138,8 @@ goArBtn.addEventListener("click", async () => {
   arScreenEl.classList.add("active");
   arHint.hidden = false;
   arControls.hidden = true;
+  modeToggle.hidden = true;
+  setMode("move");
 
   try {
     await scene.start();
@@ -157,6 +164,17 @@ function exitArUI() {
 
 exitArBtn.addEventListener("click", async () => {
   if (arScene) await arScene.end();
+});
+
+function setMode(mode) {
+  for (const b of modeToggle.querySelectorAll("button")) {
+    b.classList.toggle("active", b.dataset.mode === mode);
+  }
+  if (arScene) arScene.setInteractionMode(mode);
+}
+modeToggle.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-mode]");
+  if (btn) setMode(btn.dataset.mode);
 });
 
 resetBtn.addEventListener("click", () => {
@@ -193,11 +211,12 @@ captureBtn.addEventListener("click", async () => {
   try {
     const result = await arScene.requestCapture();
     if (!result.ok) {
+      const chrome = (navigator.userAgent.match(/Chrome\/(\d+)/) || [])[1] || "?";
       showToast(
         result.error?.message === "NO_CAMERA_ACCESS"
-          ? "이 폰에서는 AR 사진 저장이 지원되지 않아요. 폰의 스크린샷 기능(전원+볼륨 아래)을 이용해주세요."
+          ? `이 폰에서는 AR 사진 저장이 지원되지 않아요. 폰의 스크린샷 기능(전원+볼륨 아래)을 이용해주세요. (코드: ${result.error.code}, Chrome ${chrome})`
           : "캡처에 실패했어요: " + (result.error?.message || result.error),
-        6000
+        8000
       );
       return;
     }

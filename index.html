@@ -53,6 +53,10 @@
       <!-- three.js renderer canvas가 여기 들어감 -->
       <div id="ar-overlay">
         <p id="arHint" class="ar-hint">바닥이나 벽을 비추면 원이 나타나요. 탭해서 놓으세요.</p>
+        <div id="modeToggle" class="ar-ui mode-toggle" hidden>
+          <button data-mode="move" class="active">✋ 이동</button>
+          <button data-mode="rotate">🔄 회전</button>
+        </div>
         <div id="arControls" hidden>
           <button id="captureBtn" title="캡처">📸</button>
           <button id="resetBtn" title="다시 놓기">↺</button>

@@ -50,6 +50,7 @@ export class ARScene {
     this._raycaster = new THREE.Raycaster();
     this._touches = new Map(); // id -> {x, y}
     this._gestureState = null;
+    this.interactionMode = "move";
 
     this._captureRequested = false;
     this._onCaptured = null;
@@ -77,6 +78,14 @@ export class ARScene {
   }
 
   async start() {
+    // Chrome for Android leaves camera-access images empty when rendering
+    // goes through an XRProjectionLayer (crbug.com/507508099, three.js
+    // #33404). three.js picks that path whenever layers exist, so hide them
+    // and use the classic XRWebGLLayer, like Chrome's own camera sample.
+    if (typeof XRRenderState !== "undefined" && "layers" in XRRenderState.prototype) {
+      delete XRRenderState.prototype.layers;
+    }
+
     const session = await navigator.xr.requestSession("immersive-ar", {
       requiredFeatures: ["hit-test"],
       // camera-access lets capture include the real room behind the model.
@@ -237,17 +246,22 @@ export class ARScene {
   _captureFrame(frame) {
     const renderer = this.renderer;
     const session = renderer.xr.getSession();
-    const pose = frame && frame.getViewerPose(renderer.xr.getReferenceSpace());
-    const view = pose && pose.views.find((v) => v.camera);
-    if (!view || typeof XRWebGLBinding === "undefined") {
-      throw new Error("NO_CAMERA_ACCESS");
+    // Distinct codes so a failure report from a phone tells us which step broke.
+    const fail = (code) => Object.assign(new Error("NO_CAMERA_ACCESS"), { code });
+    if (session.enabledFeatures && !session.enabledFeatures.includes("camera-access")) {
+      throw fail("not-granted");
     }
+    if (typeof XRWebGLBinding === "undefined") throw fail("no-binding");
+    const pose = frame && frame.getViewerPose(renderer.xr.getReferenceSpace());
+    if (!pose) throw fail("no-pose");
+    const view = pose.views.find((v) => v.camera);
+    if (!view) throw fail("no-view-camera");
 
     const gl = renderer.getContext();
     if (!this._glBinding) this._glBinding = new XRWebGLBinding(session, gl);
     renderer.state.unbindTexture();
     const glTexture = this._glBinding.getCameraImage(view.camera);
-    if (!glTexture) throw new Error("NO_CAMERA_ACCESS");
+    if (!glTexture) throw fail("empty-image");
     renderer.properties.get(this._camTexture).__webglTexture = glTexture;
 
     const width = view.camera.width;
@@ -339,10 +353,29 @@ export class ARScene {
     this._initGesture();
   }
 
+  /** "move": 1-finger drag slides the model on the floor. "rotate": 1-finger horizontal drag spins it. */
+  setInteractionMode(mode) {
+    this.interactionMode = mode;
+    this._initGesture();
+  }
+
+  _floorHit(x, y) {
+    this._raycaster.setFromCamera(this._screenToNDC(x, y), this.camera);
+    const hit = new THREE.Vector3();
+    return this._raycaster.ray.intersectPlane(this._floorPlane, hit) ? hit : null;
+  }
+
   _initGesture() {
     const pts = Array.from(this._touches.values());
-    if (pts.length === 1) {
-      this._gestureState = { mode: "move" };
+    if (pts.length === 1 && this.interactionMode === "rotate") {
+      this._gestureState = { mode: "rotate", lastX: pts[0].x };
+    } else if (pts.length === 1) {
+      // Keep the finger-to-model offset so the model doesn't jump under the finger.
+      const hit = this._floorHit(pts[0].x, pts[0].y);
+      const offset = hit && this.modelGroup
+        ? new THREE.Vector3().subVectors(this.modelGroup.position, hit)
+        : new THREE.Vector3();
+      this._gestureState = { mode: "move", offset };
     } else if (pts.length >= 2) {
       const [a, b] = pts;
       this._gestureState = {
@@ -366,13 +399,15 @@ export class ARScene {
     if (!this.modelGroup || !this._gestureState) return;
     const pts = Array.from(this._touches.values());
 
-    if (this._gestureState.mode === "move" && pts.length === 1) {
-      const ndc = this._screenToNDC(pts[0].x, pts[0].y);
-      this._raycaster.setFromCamera(ndc, this.camera);
-      const hit = new THREE.Vector3();
-      if (this._raycaster.ray.intersectPlane(this._floorPlane, hit)) {
-        this.modelGroup.position.x = hit.x;
-        this.modelGroup.position.z = hit.z;
+    if (this._gestureState.mode === "rotate" && pts.length === 1) {
+      const dx = pts[0].x - this._gestureState.lastX;
+      this.modelGroup.rotation.y += dx * ((2 * Math.PI) / window.innerWidth); // full swipe ≈ one turn
+      this._gestureState.lastX = pts[0].x;
+    } else if (this._gestureState.mode === "move" && pts.length === 1) {
+      const hit = this._floorHit(pts[0].x, pts[0].y);
+      if (hit) {
+        this.modelGroup.position.x = hit.x + this._gestureState.offset.x;
+        this.modelGroup.position.z = hit.z + this._gestureState.offset.z;
       }
     } else if (this._gestureState.mode === "transform" && pts.length >= 2) {
       const [a, b] = pts;
@@ -387,7 +422,10 @@ export class ARScene {
       );
       this.modelGroup.scale.setScalar(newScale);
 
-      const deltaAngle = angle - this._gestureState.prevAngle;
+      let deltaAngle = angle - this._gestureState.prevAngle;
+      // atan2 wraps at ±π; without this a twist through that point spins the model a full turn.
+      if (deltaAngle > Math.PI) deltaAngle -= 2 * Math.PI;
+      if (deltaAngle < -Math.PI) deltaAngle += 2 * Math.PI;
       this.modelGroup.rotation.y -= deltaAngle;
 
       this._gestureState.prevDist = dist;
