@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>포토 AR</title>
+<link rel="stylesheet" href="src/style.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+    "@huggingface/transformers": "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2/dist/transformers.min.js"
+  }
+}
+</script>
+</head>
+<body>
+  <div id="app">
+    <!-- 1) 업로드 & 미리보기 화면 -->
+    <section id="setup-screen" class="screen active">
+      <header>
+        <h1>포토 AR</h1>
+        <p>사진 한 장으로 3D 입체 오브젝트를 만들고, 내 공간에 AR로 놓아보세요.</p>
+      </header>
+
+      <div class="upload-box" id="uploadBox">
+        <input type="file" id="fileInput" accept="image/*" hidden />
+        <div id="uploadPlaceholder">
+          <span class="icon">📷</span>
+          <p>탭해서 사진 선택</p>
+        </div>
+        <img id="previewImg" hidden />
+      </div>
+
+      <div class="controls-row">
+        <label for="depthSlider">입체감 강도</label>
+        <input type="range" id="depthSlider" min="0" max="100" value="35" />
+      </div>
+
+      <button id="convertBtn" class="primary-btn" disabled>3D로 변환하기</button>
+      <p id="statusText" class="status-text"></p>
+
+      <div id="previewWrap" hidden>
+        <canvas id="previewCanvas"></canvas>
+        <p class="hint">손가락/마우스로 드래그하면 회전해서 확인할 수 있어요</p>
+        <button id="goArBtn" class="primary-btn" disabled>AR로 내 공간에 놓기</button>
+        <p id="arSupportText" class="status-text"></p>
+      </div>
+    </section>
+
+    <!-- 2) AR 화면 -->
+    <section id="ar-screen" class="screen">
+      <!-- three.js renderer canvas가 여기 들어감 -->
+      <div id="ar-overlay">
+        <p id="arHint" class="ar-hint">바닥이나 벽을 비추면 원이 나타나요. 탭해서 놓으세요.</p>
+        <div id="arControls" hidden>
+          <button id="captureBtn" title="캡처">📸</button>
+          <button id="resetBtn" title="다시 놓기">↺</button>
+          <button id="exitArBtn" title="종료">✕</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
