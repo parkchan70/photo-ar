@@ -83,7 +83,19 @@ export class ARScene {
     });
 
     document.body.appendChild(this.renderer.domElement);
-    await this.renderer.xr.setSession(session);
+    // three.js defaults to 'local-floor', which many phones reject; 'local' is
+    // guaranteed for immersive sessions and hit-test gives us the floor anyway.
+    this.renderer.xr.setReferenceSpaceType("local");
+    try {
+      await this.renderer.xr.setSession(session);
+    } catch (err) {
+      // Don't leave a half-started session holding the camera with a black screen.
+      await session.end().catch(() => {});
+      if (this.renderer.domElement.parentNode) {
+        this.renderer.domElement.parentNode.removeChild(this.renderer.domElement);
+      }
+      throw err;
+    }
 
     this.placed = false;
     this.hitTestSource = null;
