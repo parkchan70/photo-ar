@@ -91,6 +91,15 @@ header p { margin: 0 0 20px; color: var(--muted); font-size: 14px; line-height: 
 }
 
 #previewWrap { margin-top: 20px; }
+.section-title { font-size: 16px; margin: 22px 0 4px; }
+#cutoutCanvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 16px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
 #previewCanvas {
   width: 100%;
   aspect-ratio: 1 / 1;

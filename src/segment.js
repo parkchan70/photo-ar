@@ -3,9 +3,14 @@
  * light paper: ink is anything noticeably darker or more colorful than the
  * paper around it (adaptive threshold, so shadows across the sheet are fine).
  *
+ * Paper fully enclosed by strokes ("holes") is ambiguous: a gap between an
+ * arm and the body, or an outlined-but-uncolored face. Only tiny holes (gaps
+ * between crayon strokes) are filled by default; the rest can be toggled by
+ * the user with toggleHoleAt().
+ *
  * @param {HTMLImageElement} image
  * @param {number} maxSize - working resolution (long side, px)
- * @returns {{mask: Uint8Array, width: number, height: number}}
+ * @returns {Segmentation} {mask, width, height, ...state for toggleHoleAt}
  */
 export function segmentDrawing(image, maxSize = 512) {
   const srcW = image.naturalWidth || image.width;
@@ -43,17 +48,83 @@ export function segmentDrawing(image, maxSize = 512) {
   for (let i = 0; i < N; i++) {
     fg[i] = paper[i] && (gray[i] < meanGray[i] - 12 || sat[i] > meanSat[i] + 30) ? 1 : 0;
   }
-  fg = erode(dilate(fg, W, H, unit), W, H, unit); // connect crayon strokes
-  fillHoles(fg, W, H, 0.4 * N); // outlined-but-uncolored areas become solid
-  fg = dilate(erode(fg, W, H, unit), W, H, unit); // drop thin specks and paper-edge lines
+  const strokes = erode(dilate(fg, W, H, unit), W, H, unit); // connect crayon strokes
 
-  const mask = pickMainComponent(fg, W, H);
+  const { labels: holeLabels, regions } = labelRegions(strokes, W, H, 0);
+
+  // Enclosed regions are either bare paper (gap between limbs, uncolored face)
+  // or the inside of a big solid-colored area, which the adaptive threshold
+  // misses because it matches its own surroundings. Tell them apart by color.
+  const sumGray = new Float64Array(regions.length), sumSat = new Float64Array(regions.length);
+  let paperGray = 0, paperSat = 0, paperCount = 0;
+  for (let i = 0; i < N; i++) {
+    const id = holeLabels[i];
+    if (id < 0) continue;
+    sumGray[id] += gray[i];
+    sumSat[id] += sat[i];
+    if (regions[id].touchesBorder && paper[i]) { paperGray += gray[i]; paperSat += sat[i]; paperCount++; }
+  }
+  if (paperCount > 0) { paperGray /= paperCount; paperSat /= paperCount; }
+  else { paperGray = 220; paperSat = 20; }
+
+  const smallHole = Math.max(40, 0.002 * N);
+  const holes = regions.map((r, id) => {
+    const g = sumGray[id] / r.area, s = sumSat[id] / r.area;
+    const paperLike = g > paperGray - Math.max(25, 0.15 * paperGray) && s < paperSat + 25;
+    return {
+      area: r.area,
+      // Border-touching regions are the open paper; a huge one is the sheet itself.
+      toggleable: !r.touchesBorder && r.area < 0.4 * N,
+      filled: !r.touchesBorder && (!paperLike || r.area <= smallHole),
+    };
+  });
+
+  const seg = {
+    width: W, height: H, strokes, holeLabels, holes, mask: null,
+    // Used by texture cleanup to repaint paper showing between crayon strokes.
+    ink: fg, unit, smallHole, paperGray, paperSat,
+  };
+  rebuildMask(seg);
   let area = 0;
-  for (let i = 0; i < N; i++) area += mask[i];
+  for (let i = 0; i < N; i++) area += seg.mask[i];
   if (area < N * 0.005) {
     throw new Error("사진에서 그림을 찾지 못했어요. 밝은 종이 위의 그림을 가까이서 찍어주세요.");
   }
-  return { mask, width: W, height: H };
+  return seg;
+}
+
+/**
+ * Flips an enclosed paper region at (x, y) (working-resolution pixels)
+ * between kept and removed. Returns true if something changed.
+ */
+export function toggleHoleAt(seg, x, y) {
+  const { width: W, height: H } = seg;
+  const cx = Math.round(x), cy = Math.round(y);
+  // Holes can be thin slivers; accept a tap that lands just beside one.
+  const reach = Math.max(2, Math.round(Math.max(W, H) / 80));
+  let best = -1, bestD = Infinity;
+  for (let dy = -reach; dy <= reach; dy++) {
+    for (let dx = -reach; dx <= reach; dx++) {
+      const px = cx + dx, py = cy + dy;
+      if (px < 0 || py < 0 || px >= W || py >= H) continue;
+      const id = seg.holeLabels[py * W + px];
+      const d = dx * dx + dy * dy;
+      if (id >= 0 && seg.holes[id].toggleable && d < bestD) { best = id; bestD = d; }
+    }
+  }
+  if (best < 0) return false;
+  seg.holes[best].filled = !seg.holes[best].filled;
+  rebuildMask(seg);
+  return true;
+}
+
+function rebuildMask(seg) {
+  const { width: W, height: H, strokes, holeLabels, holes } = seg;
+  const fg = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    fg[i] = strokes[i] || (holeLabels[i] >= 0 && holes[holeLabels[i]].filled) ? 1 : 0;
+  }
+  seg.mask = pickMainComponent(fg, W, H);
 }
 
 /**
@@ -222,16 +293,6 @@ function labelRegions(m, W, H, value) {
     regions.push({ area, touchesBorder });
   }
   return { labels, regions };
-}
-
-function fillHoles(fg, W, H, maxHoleArea) {
-  // A photographed sheet lying fully inside the frame is ringed by a detected
-  // paper edge, so the whole sheet looks like a "hole"; the size cap skips it.
-  const { labels, regions } = labelRegions(fg, W, H, 0);
-  for (let i = 0; i < W * H; i++) {
-    const r = labels[i] >= 0 ? regions[labels[i]] : null;
-    if (r && !r.touchesBorder && r.area < maxHoleArea) fg[i] = 1;
-  }
 }
 
 function pickMainComponent(fg, W, H) {

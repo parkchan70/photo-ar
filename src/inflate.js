@@ -9,7 +9,7 @@ const GRID = 170; // vertices along the long side of the photo
  *
  * The result stands upright with its bottom at y=0, long side = 1 unit.
  *
- * @param {HTMLImageElement} image
+ * @param {HTMLImageElement|HTMLCanvasElement} image - texture, same framing as the segmented photo
  * @param {{mask: Uint8Array, width: number, height: number}} seg
  * @param {number} thickness - roughly depth/width ratio at the fattest part
  */

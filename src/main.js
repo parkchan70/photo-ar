@@ -1,5 +1,6 @@
-import { segmentDrawing } from "./segment.js";
+import { segmentDrawing, toggleHoleAt } from "./segment.js";
 import { buildInflatedMesh, disposeModel } from "./inflate.js";
+import { buildCleanTexture } from "./texture.js";
 import { PreviewScene } from "./previewScene.js";
 import { ARScene } from "./arScene.js";
 
@@ -28,7 +29,7 @@ const exitArBtn = $("exitArBtn");
 const modeToggle = $("modeToggle");
 
 let sourceImage = null; // HTMLImageElement
-let segmentation = null; // {mask, width, height}
+let segmentation = null; // from segmentDrawing(); toggleHoleAt() edits it in place
 let modelGroup = null; // THREE.Group, lives in exactly one scene at a time
 
 const preview = new PreviewScene(previewCanvas);
@@ -90,8 +91,11 @@ fileInput.addEventListener("change", async () => {
 // ---------- Convert to 3D ----------
 const thickness = () => 0.2 + (Number(depthSlider.value) / 100) * 1.2;
 
-function rebuildModel({ resetView }) {
-  const next = buildInflatedMesh(sourceImage, segmentation, thickness());
+let cleanTexture = null; // photo with paper between crayon strokes repainted
+
+function rebuildModel({ resetView, maskChanged }) {
+  if (maskChanged || !cleanTexture) cleanTexture = buildCleanTexture(sourceImage, segmentation);
+  const next = buildInflatedMesh(cleanTexture, segmentation, thickness());
   const prev = modelGroup;
   modelGroup = next;
   preview.setModel(modelGroup, { resetView });
@@ -108,9 +112,10 @@ convertBtn.addEventListener("click", async () => {
     segmentation = segmentDrawing(sourceImage);
     statusText.textContent = "입체로 부풀리는 중...";
     await new Promise((r) => setTimeout(r, 30));
-    rebuildModel({ resetView: true });
+    rebuildModel({ resetView: true, maskChanged: true });
 
     previewWrap.hidden = false;
+    drawCutout();
     goArBtn.disabled = !arSupported;
     statusText.textContent = "완료! 아래 미리보기를 돌려서 앞뒤를 확인해보세요.";
   } catch (err) {
@@ -123,6 +128,58 @@ convertBtn.addEventListener("click", async () => {
 
 depthSlider.addEventListener("change", () => {
   if (modelGroup && segmentation) rebuildModel({ resetView: false });
+});
+
+// ---------- Cut-out editor ----------
+const cutoutCanvas = $("cutoutCanvas");
+
+function drawCutout() {
+  const { width: W, height: H, mask, holeLabels, holes } = segmentation;
+  const c = document.createElement("canvas");
+  c.width = W;
+  c.height = H;
+  const cx = c.getContext("2d", { willReadFrequently: true });
+  cx.drawImage(cleanTexture, 0, 0, W, H);
+  const cutoutPhoto = cx.getImageData(0, 0, W, H);
+
+  cutoutCanvas.width = W;
+  cutoutCanvas.height = H;
+  const ctx = cutoutCanvas.getContext("2d");
+  const cell = Math.max(6, Math.round(Math.max(W, H) / 40));
+  for (let y = 0; y < H; y += cell) {
+    for (let x = 0; x < W; x += cell) {
+      ctx.fillStyle = ((x / cell + y / cell) & 1) ? "#2a2c36" : "#1d1f27";
+      ctx.fillRect(x, y, cell, cell);
+    }
+  }
+
+  const out = new ImageData(new Uint8ClampedArray(cutoutPhoto.data), W, H);
+  for (let i = 0; i < W * H; i++) {
+    if (mask[i]) continue;
+    const id = holeLabels[i];
+    if (id >= 0 && holes[id].toggleable) {
+      // Removed enclosed paper: faint pink so it's clear it can be tapped back.
+      out.data.set([255, 90, 130, 70], i * 4);
+    } else {
+      out.data[i * 4 + 3] = 0;
+    }
+  }
+  const layer = document.createElement("canvas");
+  layer.width = W;
+  layer.height = H;
+  layer.getContext("2d").putImageData(out, 0, 0);
+  ctx.drawImage(layer, 0, 0);
+}
+
+cutoutCanvas.addEventListener("click", (e) => {
+  if (!segmentation) return;
+  const rect = cutoutCanvas.getBoundingClientRect();
+  const x = ((e.clientX - rect.left) / rect.width) * segmentation.width;
+  const y = ((e.clientY - rect.top) / rect.height) * segmentation.height;
+  if (toggleHoleAt(segmentation, x, y)) {
+    rebuildModel({ resetView: false, maskChanged: true });
+    drawCutout();
+  }
 });
 
 // ---------- Enter AR ----------
