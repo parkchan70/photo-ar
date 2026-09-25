@@ -252,6 +252,57 @@ header p { margin: 0 0 20px; color: var(--muted); font-size: 14px; line-height: 
   100% { transform: scale(1); }
 }
 
+.browser-tip {
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: #3a2f12;
+  border: 1px solid #7a6320;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.browser-tip p { margin: 0 0 10px; }
+.chrome-link {
+  display: inline-block;
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.no-capture {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 150px);
+  z-index: 10;
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(20, 21, 28, 0.94);
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: center;
+}
+.no-capture p { margin: 0 0 12px; }
+.panel-actions { display: flex; flex-direction: column; gap: 8px; }
+.panel-actions button, .panel-actions a {
+  padding: 12px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.14);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  text-align: center;
+}
+.panel-actions .panel-primary { background: var(--accent); }
+.no-capture .panel-code { margin: 10px 0 0; font-size: 11px; color: var(--muted); }
+
+/* Screenshot mode: hide every overlay control so the phone's own capture is clean. */
+#ar-overlay.clean > * { visibility: hidden; }
+
 .ar-toast.success { background: rgba(22, 128, 61, 0.92); font-size: 15px; font-weight: 600; }
 .sheet-actions button {
   min-width: 84px;

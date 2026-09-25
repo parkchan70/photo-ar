@@ -23,6 +23,11 @@
         <p>종이에 그린 그림을 찍어 올리면 종이는 지우고 그림만 입체로 만들어, 내 공간에 AR로 놓아볼 수 있어요.</p>
       </header>
 
+      <div id="browserTip" class="browser-tip" hidden>
+        <p>삼성 인터넷에서는 AR 사진 촬영(📸)이 지원되지 않아요.<br />사진을 찍으려면 Chrome에서 열어주세요.</p>
+        <a class="chrome-link">Chrome으로 열기</a>
+      </div>
+
       <div class="upload-box" id="uploadBox">
         <input type="file" id="fileInput" accept="image/*" hidden />
         <div id="uploadPlaceholder">
@@ -79,6 +84,15 @@
             <button id="shareShotBtn" class="sheet-primary">공유</button>
             <button id="closeShotBtn">닫기</button>
           </div>
+        </div>
+        <div id="noCapturePanel" class="ar-ui no-capture" hidden>
+          <p id="noCaptureText"></p>
+          <div class="panel-actions">
+            <a class="chrome-link panel-primary">Chrome으로 열기</a>
+            <button id="cleanShotBtn">버튼 숨기고 직접 캡처</button>
+            <button id="noCaptureCloseBtn">닫기</button>
+          </div>
+          <p id="noCaptureCode" class="panel-code"></p>
         </div>
       </div>
     </section>

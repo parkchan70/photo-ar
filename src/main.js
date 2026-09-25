@@ -34,6 +34,19 @@ let modelGroup = null; // THREE.Group, lives in exactly one scene at a time
 
 const preview = new PreviewScene(previewCanvas);
 
+// Samsung Internet runs WebXR AR but never grants "camera-access", so the
+// in-app shutter can't include the room. Point those users to Chrome.
+const isSamsungInternet = /SamsungBrowser\//.test(navigator.userAgent);
+const chromeIntentUrl =
+  `intent://${location.host}${location.pathname}${location.search}` +
+  "#Intent;scheme=https;package=com.android.chrome;" +
+  `S.browser_fallback_url=${encodeURIComponent("https://play.google.com/store/apps/details?id=com.android.chrome")};end`;
+for (const a of document.querySelectorAll(".chrome-link")) {
+  a.href = chromeIntentUrl;
+  a.hidden = !isSamsungInternet;
+}
+$("browserTip").hidden = !isSamsungInternet;
+
 let arSupported = false;
 ARScene.isSupported().then((supported) => {
   arSupported = supported;
@@ -212,6 +225,8 @@ function exitArUI() {
   setupScreen.classList.add("active");
   captureSheet.hidden = true;
   shotThumb.hidden = true;
+  noCapturePanel.hidden = true;
+  arOverlay.classList.remove("clean");
   if (modelGroup) {
     modelGroup.position.set(0, 0, 0);
     modelGroup.rotation.set(0, 0, 0);
@@ -285,18 +300,13 @@ function saveToDevice(shot) {
 captureBtn.addEventListener("click", async () => {
   if (!arScene) return;
   captureBtn.disabled = true;
-  // The flash is DOM-only, so it never ends up in the captured image.
-  restartAnimation(shutterFlash, "go");
   try {
     const result = await arScene.requestCapture();
+    // Flash only on success (it's DOM-only, so it never lands in the image).
+    if (result.ok) restartAnimation(shutterFlash, "go");
     if (!result.ok) {
-      const chrome = (navigator.userAgent.match(/Chrome\/(\d+)/) || [])[1] || "?";
-      showToast(
-        result.error?.message === "NO_CAMERA_ACCESS"
-          ? `이 폰에서는 AR 사진 저장이 지원되지 않아요. 폰의 스크린샷 기능(전원+볼륨 아래)을 이용해주세요. (코드: ${result.error.code}, Chrome ${chrome})`
-          : "캡처에 실패했어요: " + (result.error?.message || result.error),
-        8000
-      );
+      if (result.error?.message === "NO_CAMERA_ACCESS") showNoCapturePanel(result.error.code);
+      else showToast("캡처에 실패했어요: " + (result.error?.message || result.error), 8000);
       return;
     }
     const blob = await pixelsToJpeg(result);
@@ -355,4 +365,32 @@ shareShotBtn.addEventListener("click", async () => {
 
 closeShotBtn.addEventListener("click", () => {
   captureSheet.hidden = true;
+});
+
+// ---------- When the browser can't capture the camera ----------
+const noCapturePanel = $("noCapturePanel");
+const CLEAN_SHOT_SECONDS = 5;
+
+function showNoCapturePanel(code) {
+  const version = (navigator.userAgent.match(/Chrome\/(\d+)/) || [])[1] || "?";
+  $("noCaptureText").textContent = isSamsungInternet
+    ? "삼성 인터넷은 AR 사진 촬영을 지원하지 않아요. Chrome에서 열면 📸 버튼으로 바로 저장돼요."
+    : "이 브라우저는 AR 사진 촬영을 지원하지 않아요.";
+  $("noCaptureCode").textContent = `(코드: ${code}, ${isSamsungInternet ? "Samsung Internet" : "Chrome"} ${version})`;
+  $("cleanShotBtn").textContent = `버튼 숨기고 직접 캡처 (${CLEAN_SHOT_SECONDS}초)`;
+  noCapturePanel.hidden = false;
+}
+
+$("noCaptureCloseBtn").addEventListener("click", () => {
+  noCapturePanel.hidden = true;
+});
+
+$("cleanShotBtn").addEventListener("click", () => {
+  noCapturePanel.hidden = true;
+  arToast.hidden = true;
+  arOverlay.classList.add("clean");
+  setTimeout(() => {
+    arOverlay.classList.remove("clean");
+    showToast("버튼이 다시 나타났어요. 캡처한 사진은 갤러리의 스크린샷 앨범에 있어요.", 4000);
+  }, CLEAN_SHOT_SECONDS * 1000);
 });
