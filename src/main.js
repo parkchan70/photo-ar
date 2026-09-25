@@ -1,5 +1,5 @@
-import { estimateDepth } from "./depth.js";
-import { buildReliefMesh, updateReliefStrength } from "./meshBuilder.js";
+import { segmentDrawing } from "./segment.js";
+import { buildInflatedMesh, disposeModel } from "./inflate.js";
 import { PreviewScene } from "./previewScene.js";
 import { ARScene } from "./arScene.js";
 
@@ -27,7 +27,7 @@ const resetBtn = $("resetBtn");
 const exitArBtn = $("exitArBtn");
 
 let sourceImage = null; // HTMLImageElement
-let depthMap = null; // {data, width, height}
+let segmentation = null; // {mask, width, height}
 let modelGroup = null; // THREE.Group, lives in exactly one scene at a time
 
 const preview = new PreviewScene(previewCanvas);
@@ -83,28 +83,31 @@ fileInput.addEventListener("change", async () => {
 });
 
 // ---------- Convert to 3D ----------
+const thickness = () => 0.2 + (Number(depthSlider.value) / 100) * 1.2;
+
+function rebuildModel({ resetView }) {
+  const next = buildInflatedMesh(sourceImage, segmentation, thickness());
+  const prev = modelGroup;
+  modelGroup = next;
+  preview.setModel(modelGroup, { resetView });
+  if (prev) disposeModel(prev);
+}
+
 convertBtn.addEventListener("click", async () => {
   if (!sourceImage) return;
   convertBtn.disabled = true;
-  statusText.textContent = "AI 깊이 추정 모델을 불러오는 중... (처음 한 번만, 다소 걸릴 수 있어요)";
+  statusText.textContent = "그림을 오려내는 중...";
+  await new Promise((r) => setTimeout(r, 30)); // let the status text paint
 
   try {
-    depthMap = await estimateDepth(sourceImage, (p) => {
-      if (p && p.status === "progress" && p.file) {
-        statusText.textContent = `모델 다운로드 중... ${Math.round(p.progress || 0)}%`;
-      } else if (p && p.status === "ready") {
-        statusText.textContent = "깊이 정보 계산 중...";
-      }
-    });
-
-    statusText.textContent = "3D 메쉬 생성 중...";
-    const strength = Number(depthSlider.value) / 100;
-    modelGroup = buildReliefMesh(sourceImage, depthMap, strength);
-    preview.setModel(modelGroup);
+    segmentation = segmentDrawing(sourceImage);
+    statusText.textContent = "입체로 부풀리는 중...";
+    await new Promise((r) => setTimeout(r, 30));
+    rebuildModel({ resetView: true });
 
     previewWrap.hidden = false;
     goArBtn.disabled = !arSupported;
-    statusText.textContent = "완료! 아래 미리보기를 돌려서 확인해보세요.";
+    statusText.textContent = "완료! 아래 미리보기를 돌려서 앞뒤를 확인해보세요.";
   } catch (err) {
     console.error(err);
     statusText.textContent = "3D 변환 중 오류가 발생했어요: " + (err?.message || err);
@@ -113,16 +116,17 @@ convertBtn.addEventListener("click", async () => {
   }
 });
 
-depthSlider.addEventListener("input", () => {
-  if (!modelGroup || !depthMap) return;
-  const strength = Number(depthSlider.value) / 100;
-  updateReliefStrength(modelGroup, depthMap, strength);
+depthSlider.addEventListener("change", () => {
+  if (modelGroup && segmentation) rebuildModel({ resetView: false });
 });
 
 // ---------- Enter AR ----------
 goArBtn.addEventListener("click", async () => {
   if (!modelGroup) return;
   const scene = getArScene();
+  modelGroup.position.set(0, 0, 0);
+  modelGroup.rotation.set(0, 0, 0);
+  modelGroup.scale.setScalar(0.4); // ~40cm tall/wide in the room to start
   scene.setModel(modelGroup); // moves it out of the preview scene automatically
 
   setupScreen.classList.remove("active");
@@ -143,6 +147,10 @@ function exitArUI() {
   arScreenEl.classList.remove("active");
   setupScreen.classList.add("active");
   if (modelGroup) {
+    modelGroup.position.set(0, 0, 0);
+    modelGroup.rotation.set(0, 0, 0);
+    modelGroup.scale.setScalar(1);
+    modelGroup.visible = true;
     preview.setModel(modelGroup); // bring it back to the turntable preview
   }
 }

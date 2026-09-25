@@ -52,11 +52,17 @@ export class PreviewScene {
     this.renderer.render(this.scene, this.camera);
   }
 
-  setModel(group) {
+  setModel(group, { resetView = true } = {}) {
     if (this.currentModel) {
       this.scene.remove(this.currentModel);
     }
     this.currentModel = group;
     this.scene.add(group);
+    if (!resetView) return;
+
+    const center = new THREE.Box3().setFromObject(group).getCenter(new THREE.Vector3());
+    this.controls.target.copy(center);
+    this.camera.position.set(center.x + 0.5, center.y + 0.2, center.z + 1.4);
+    this.controls.update();
   }
 }

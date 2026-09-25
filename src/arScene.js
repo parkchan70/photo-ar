@@ -195,16 +195,12 @@ export class ARScene {
   _onSelect() {
     if (this.placed || !this.reticle.visible || !this.modelGroup) return;
     this.modelGroup.position.setFromMatrixPosition(this.reticle.matrix);
-    this.modelGroup.quaternion.setFromRotationMatrix(this.reticle.matrix);
-    // Face the model roughly towards the camera at drop time.
+    // Stand upright (model's bottom is at local y=0) facing the camera.
     const camPos = new THREE.Vector3();
     this.camera.getWorldPosition(camPos);
     const toCam = new THREE.Vector3().subVectors(camPos, this.modelGroup.position);
-    toCam.y = 0;
-    if (toCam.lengthSq() > 1e-6) {
-      const angle = Math.atan2(toCam.x, toCam.z);
-      this.modelGroup.rotation.y = angle;
-    }
+    const angle = Math.atan2(toCam.x, toCam.z);
+    this.modelGroup.rotation.set(0, Number.isFinite(angle) ? angle : 0, 0);
     this.modelGroup.visible = true;
     this.placed = true;
     this._floorPlane.constant = -this.modelGroup.position.y;
