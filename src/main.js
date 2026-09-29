@@ -1,6 +1,7 @@
 import { segmentDrawing, toggleHoleAt } from "./segment.js";
 import { buildInflatedMesh, disposeModel } from "./inflate.js";
 import { buildCleanTexture } from "./texture.js";
+import { detectNonChromeBrowser, chromeIntentUrl } from "./browser.js";
 import { PreviewScene } from "./previewScene.js";
 import { ARScene } from "./arScene.js";
 
@@ -34,18 +35,18 @@ let modelGroup = null; // THREE.Group, lives in exactly one scene at a time
 
 const preview = new PreviewScene(previewCanvas);
 
-// Samsung Internet runs WebXR AR but never grants "camera-access", so the
-// in-app shutter can't include the room. Point those users to Chrome.
-const isSamsungInternet = /SamsungBrowser\//.test(navigator.userAgent);
-const chromeIntentUrl =
-  `intent://${location.host}${location.pathname}${location.search}` +
-  "#Intent;scheme=https;package=com.android.chrome;" +
-  `S.browser_fallback_url=${encodeURIComponent("https://play.google.com/store/apps/details?id=com.android.chrome")};end`;
+const nonChromeBrowser = detectNonChromeBrowser();
+const isSamsungInternet = nonChromeBrowser === "samsung";
 for (const a of document.querySelectorAll(".chrome-link")) {
-  a.href = chromeIntentUrl;
-  a.hidden = !isSamsungInternet;
+  a.href = chromeIntentUrl();
+  a.hidden = !nonChromeBrowser;
 }
-$("browserTip").hidden = !isSamsungInternet;
+$("browserTip").hidden = !nonChromeBrowser;
+if (nonChromeBrowser === "naver") {
+  $("browserTipText").innerHTML =
+    "네이버 앱에서는 AR 기능(내 공간에 놓기, 사진 촬영)을 쓸 수 없어요.<br />Chrome에서 열어주세요.";
+  $("browserTipFallback").hidden = false;
+}
 
 let arSupported = false;
 ARScene.isSupported().then((supported) => {
