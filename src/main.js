@@ -42,9 +42,10 @@ for (const a of document.querySelectorAll(".chrome-link")) {
   a.hidden = !nonChromeBrowser;
 }
 $("browserTip").hidden = !nonChromeBrowser;
-if (nonChromeBrowser === "naver") {
+const inAppNames = { naver: "네이버 앱", kakao: "카카오톡" };
+if (inAppNames[nonChromeBrowser]) {
   $("browserTipText").innerHTML =
-    "네이버 앱에서는 AR 기능(내 공간에 놓기, 사진 촬영)을 쓸 수 없어요.<br />Chrome에서 열어주세요.";
+    `${inAppNames[nonChromeBrowser]}에서는 AR 기능(내 공간에 놓기, 사진 촬영)을 쓸 수 없어요.<br />Chrome에서 열어주세요.`;
   $("browserTipFallback").hidden = false;
 }
 
