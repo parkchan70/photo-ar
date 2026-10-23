@@ -231,6 +231,11 @@ function segmentDigital(px, W, H, unit, bg) {
     const id = holeLabels[i];
     if (id >= 0 && which[i]) counts[id][which[i] - 1]++;
   }
+  // Rough size of the character: its drawn pixels plus everything they enclose.
+  let charArea = 0;
+  for (let i = 0; i < N; i++) charArea += strokes[i];
+  regions.forEach((r) => { if (!r.touchesBorder) charArea += r.area; });
+
   const holes = regions.map((r, id) => {
     let background;
     if (bg.kind === "alpha") background = true;
@@ -238,7 +243,9 @@ function segmentDigital(px, W, H, unit, bg) {
       // The fake checkerboard shows both of its colors; a white eye shows one.
       background = Math.min(counts[id][0], counts[id][1]) >= 0.15 * r.area;
     } else {
-      background = r.area > 0.01 * N; // big flat patch = gap; small = eye/highlight
+      // Same color as the background, fully enclosed: a gap between limbs is
+      // mid-sized; a highlight is tiny; a white body/face is most of the character.
+      background = r.area > 0.01 * N && r.area < 0.15 * charArea;
     }
     return {
       area: r.area,
