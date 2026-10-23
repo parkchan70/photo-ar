@@ -258,14 +258,17 @@ export class ARScene {
     const session = renderer.xr.getSession();
     // Distinct codes so a failure report from a phone tells us which step broke.
     const fail = (code) => Object.assign(new Error("NO_CAMERA_ACCESS"), { code });
-    if (session.enabledFeatures && !session.enabledFeatures.includes("camera-access")) {
-      throw fail("not-granted");
-    }
+    // Try the camera itself rather than trusting session.enabledFeatures:
+    // some older Chromium builds (seen on 143) don't list "camera-access"
+    // there. The list only names the failure once the camera is really missing.
     if (typeof XRWebGLBinding === "undefined") throw fail("no-binding");
     const pose = frame && frame.getViewerPose(renderer.xr.getReferenceSpace());
     if (!pose) throw fail("no-pose");
     const view = pose.views.find((v) => v.camera);
-    if (!view) throw fail("no-view-camera");
+    if (!view) {
+      const listed = !session.enabledFeatures || session.enabledFeatures.includes("camera-access");
+      throw fail(listed ? "no-view-camera" : "not-granted");
+    }
 
     const gl = renderer.getContext();
     if (!this._glBinding) this._glBinding = new XRWebGLBinding(session, gl);
