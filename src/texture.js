@@ -17,7 +17,8 @@ export function buildCleanTexture(image, seg) {
   // per full-resolution pixel below (at this resolution gaps blur into ink).
   const repaint = new Uint8Array(W * H);
   for (let i = 0; i < W * H; i++) {
-    if (!mask[i]) continue;
+    // Areas the user brushed back in stay exactly as drawn (e.g. a white face).
+    if (!mask[i] || seg.paint[i] === 1) continue;
     const id = holeLabels[i];
     if (strokes[i] || (id >= 0 && holes[id].area <= seg.smallHole)) repaint[i] = 1;
   }

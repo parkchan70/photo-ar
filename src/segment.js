@@ -79,8 +79,21 @@ export function segmentDrawing(image, maxSize = 512) {
     };
   });
 
+  // Kids' outlines often have small breaks, so the paper inside leaks into the
+  // open sheet and isn't a "hole". Closing the strokes harder bridges those
+  // breaks; regions enclosed only then are offered as tappable "open holes".
+  const gap = unit * 4;
+  const bridged = erode(dilate(strokes, W, H, gap), W, H, gap);
+  const { labels: openLabels, regions: openRegions } = labelRegions(bridged, W, H, 0);
+  const openHoles = openRegions.map((r) => ({
+    toggleable: !r.touchesBorder && r.area < 0.4 * N,
+    filled: false,
+  }));
+
   const seg = {
-    width: W, height: H, strokes, holeLabels, holes, mask: null,
+    width: W, height: H, strokes, holeLabels, holes, openLabels, openHoles, mask: null,
+    // Brush edits: 1 = force keep, -1 = force remove, 0 = automatic.
+    paint: new Int8Array(N),
     // Used by texture cleanup to repaint paper showing between crayon strokes.
     ink: fg, unit, smallHole, paperGray, paperSat,
   };
@@ -93,38 +106,110 @@ export function segmentDrawing(image, maxSize = 512) {
   return seg;
 }
 
+const fineHoleAt = (seg, i) => {
+  const id = seg.holeLabels[i];
+  return id >= 0 && seg.holes[id].toggleable ? seg.holes[id] : null;
+};
+const openHoleAt = (seg, i) => {
+  const id = seg.openLabels[i];
+  return id >= 0 && seg.openHoles[id].toggleable ? seg.openHoles[id] : null;
+};
+
+/** True where tapping would bring a removed paper area back (shown pink). */
+export function isTapRestorable(seg, i) {
+  return !seg.mask[i] && seg.paint[i] !== -1 && !!(fineHoleAt(seg, i) || openHoleAt(seg, i));
+}
+
 /**
- * Flips an enclosed paper region at (x, y) (working-resolution pixels)
- * between kept and removed. Returns true if something changed.
+ * Tap at (x, y) (working-resolution pixels): a kept paper area is removed,
+ * a removed one (enclosed, or nearly enclosed by a broken outline) comes
+ * back. Returns true if something changed.
  */
 export function toggleHoleAt(seg, x, y) {
   const { width: W, height: H } = seg;
   const cx = Math.round(x), cy = Math.round(y);
   // Holes can be thin slivers; accept a tap that lands just beside one.
   const reach = Math.max(2, Math.round(Math.max(W, H) / 80));
-  let best = -1, bestD = Infinity;
+  let hit = -1, bestD = Infinity;
   for (let dy = -reach; dy <= reach; dy++) {
     for (let dx = -reach; dx <= reach; dx++) {
       const px = cx + dx, py = cy + dy;
       if (px < 0 || py < 0 || px >= W || py >= H) continue;
-      const id = seg.holeLabels[py * W + px];
-      const d = dx * dx + dy * dy;
-      if (id >= 0 && seg.holes[id].toggleable && d < bestD) { best = id; bestD = d; }
+      const i = py * W + px, d = dx * dx + dy * dy;
+      if (d < bestD && (fineHoleAt(seg, i) || openHoleAt(seg, i))) { hit = i; bestD = d; }
     }
   }
-  if (best < 0) return false;
-  seg.holes[best].filled = !seg.holes[best].filled;
+  if (hit < 0) return false;
+
+  const fine = fineHoleAt(seg, hit), open = openHoleAt(seg, hit);
+  if (seg.mask[hit]) {
+    // Remove whatever is keeping it.
+    if (fine) fine.filled = false;
+    if (open) open.filled = false;
+  } else if (fine) {
+    fine.filled = true; // smallest region first, so only what was tapped comes back
+  } else {
+    open.filled = true;
+  }
+  // A tap overrides earlier brush strokes inside the region it changed.
+  for (let i = 0; i < W * H; i++) {
+    if ((fine && fineHoleAt(seg, i) === fine) || (!fine && open && openHoleAt(seg, i) === open)) seg.paint[i] = 0;
+  }
   rebuildMask(seg);
   return true;
 }
 
-function rebuildMask(seg) {
-  const { width: W, height: H, strokes, holeLabels, holes } = seg;
-  const fg = new Uint8Array(W * H);
-  for (let i = 0; i < W * H; i++) {
-    fg[i] = strokes[i] || (holeLabels[i] >= 0 && holes[holeLabels[i]].filled) ? 1 : 0;
+/**
+ * Brush stroke from (x0, y0) to (x1, y1): value 1 keeps, -1 removes.
+ * Coordinates and radius are in working-resolution pixels.
+ */
+export function paintStroke(seg, x0, y0, x1, y1, radius, value) {
+  const { width: W, height: H, paint } = seg;
+  const steps = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / (radius * 0.5)));
+  const r2 = radius * radius;
+  for (let s = 0; s <= steps; s++) {
+    const cx = x0 + ((x1 - x0) * s) / steps, cy = y0 + ((y1 - y0) * s) / steps;
+    const xa = Math.max(0, Math.floor(cx - radius)), xb = Math.min(W - 1, Math.ceil(cx + radius));
+    const ya = Math.max(0, Math.floor(cy - radius)), yb = Math.min(H - 1, Math.ceil(cy + radius));
+    for (let y = ya; y <= yb; y++) {
+      for (let x = xa; x <= xb; x++) {
+        if ((x - cx) ** 2 + (y - cy) ** 2 <= r2) paint[y * W + x] = value;
+      }
+    }
   }
-  seg.mask = pickMainComponent(fg, W, H);
+  rebuildMask(seg);
+}
+
+/** Copy of everything the user can edit, for undo. */
+export function snapshotEdits(seg) {
+  return {
+    paint: seg.paint.slice(),
+    holes: seg.holes.map((h) => h.filled),
+    openHoles: seg.openHoles.map((h) => h.filled),
+  };
+}
+
+export function restoreEdits(seg, snap) {
+  seg.paint.set(snap.paint);
+  snap.holes.forEach((f, k) => (seg.holes[k].filled = f));
+  snap.openHoles.forEach((f, k) => (seg.openHoles[k].filled = f));
+  rebuildMask(seg);
+}
+
+function rebuildMask(seg) {
+  const { width: W, height: H, strokes, holeLabels, holes, openLabels, openHoles, paint } = seg;
+  const N = W * H;
+  const fg = new Uint8Array(N);
+  for (let i = 0; i < N; i++) {
+    const auto = strokes[i] ||
+      (holeLabels[i] >= 0 && holes[holeLabels[i]].filled) ||
+      (openLabels[i] >= 0 && openHoles[openLabels[i]].filled);
+    fg[i] = paint[i] === 1 || (auto && paint[i] !== -1) ? 1 : 0;
+  }
+  // Keep the main drawing; brushed-in bits stay even if they don't touch it.
+  const mask = pickMainComponent(fg, W, H);
+  for (let i = 0; i < N; i++) if (paint[i] === 1) mask[i] = 1;
+  seg.mask = mask;
 }
 
 /**

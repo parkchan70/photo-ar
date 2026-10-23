@@ -99,6 +99,24 @@ header p { margin: 0 0 20px; color: var(--muted); font-size: 14px; line-height: 
 
 #previewWrap { margin-top: 20px; }
 .section-title { font-size: 16px; margin: 22px 0 4px; }
+.edit-tools, .brush-sizes { display: flex; gap: 6px; margin: 8px 0; }
+.edit-tools button, .brush-sizes button {
+  flex: 1;
+  padding: 10px 6px;
+  border: 1px solid #33354a;
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.edit-tools button.active, .brush-sizes button.active { background: var(--accent); border-color: var(--accent); }
+.edit-tools .undo-btn { flex: 0 0 48px; font-size: 18px; }
+.edit-tools .undo-btn:disabled { opacity: 0.35; }
+.brush-sizes { align-items: center; margin-top: 0; }
+.brush-sizes span { font-size: 13px; color: var(--muted); padding-right: 4px; }
+.brush-sizes button { flex: 0 0 auto; padding: 6px 14px; font-size: 13px; }
+
 #cutoutCanvas {
   display: block;
   width: 100%;

@@ -1,4 +1,6 @@
-import { segmentDrawing, toggleHoleAt } from "./segment.js";
+import {
+  segmentDrawing, toggleHoleAt, isTapRestorable, paintStroke, snapshotEdits, restoreEdits,
+} from "./segment.js";
 import { buildInflatedMesh, disposeModel } from "./inflate.js";
 import { buildCleanTexture } from "./texture.js";
 import { detectNonChromeBrowser, chromeIntentUrl, detectIosInApp, kakaoOpenExternalUrl } from "./browser.js";
@@ -184,6 +186,7 @@ convertBtn.addEventListener("click", async () => {
 
   try {
     segmentation = segmentDrawing(sourceImage);
+    resetEditor();
     statusText.textContent = "입체로 부풀리는 중...";
     await new Promise((r) => setTimeout(r, 30));
     rebuildModel({ resetView: true, maskChanged: true });
@@ -206,18 +209,34 @@ depthSlider.addEventListener("change", () => {
 
 // ---------- Cut-out editor ----------
 const cutoutCanvas = $("cutoutCanvas");
+const editTools = $("editTools");
+const brushSizes = $("brushSizes");
+const undoBtn = $("undoBtn");
+const BRUSH_CSS_PX = { thin: 5, thick: 14 }; // radius on screen, independent of photo size
+
+let tool = "tap"; // "tap" | "restore" | "erase"
+let brushSize = "thin";
+let undoStack = [];
+let cutoutPhoto = null; // ImageData of cleanTexture at working size
+let cutoutPhotoSource = null;
+let brushCursor = null; // {x, y, r} in working pixels while painting
 
 function drawCutout() {
-  const { width: W, height: H, mask, holeLabels, holes } = segmentation;
-  const c = document.createElement("canvas");
-  c.width = W;
-  c.height = H;
-  const cx = c.getContext("2d", { willReadFrequently: true });
-  cx.drawImage(cleanTexture, 0, 0, W, H);
-  const cutoutPhoto = cx.getImageData(0, 0, W, H);
+  const { width: W, height: H, mask } = segmentation;
+  if (cutoutPhotoSource !== cleanTexture) {
+    const c = document.createElement("canvas");
+    c.width = W;
+    c.height = H;
+    const cx = c.getContext("2d", { willReadFrequently: true });
+    cx.drawImage(cleanTexture, 0, 0, W, H);
+    cutoutPhoto = cx.getImageData(0, 0, W, H);
+    cutoutPhotoSource = cleanTexture;
+  }
 
-  cutoutCanvas.width = W;
-  cutoutCanvas.height = H;
+  if (cutoutCanvas.width !== W || cutoutCanvas.height !== H) {
+    cutoutCanvas.width = W;
+    cutoutCanvas.height = H;
+  }
   const ctx = cutoutCanvas.getContext("2d");
   const cell = Math.max(6, Math.round(Math.max(W, H) / 40));
   for (let y = 0; y < H; y += cell) {
@@ -230,27 +249,129 @@ function drawCutout() {
   const out = new ImageData(new Uint8ClampedArray(cutoutPhoto.data), W, H);
   for (let i = 0; i < W * H; i++) {
     if (mask[i]) continue;
-    const id = holeLabels[i];
-    if (id >= 0 && holes[id].toggleable) {
-      // Removed enclosed paper: faint pink so it's clear it can be tapped back.
-      out.data.set([255, 90, 130, 70], i * 4);
-    } else {
-      out.data[i * 4 + 3] = 0;
-    }
+    // Removed paper that a tap brings back: faint pink. Everything else removed: transparent.
+    if (isTapRestorable(segmentation, i)) out.data.set([255, 90, 130, 70], i * 4);
+    else out.data[i * 4 + 3] = 0;
   }
   const layer = document.createElement("canvas");
   layer.width = W;
   layer.height = H;
   layer.getContext("2d").putImageData(out, 0, 0);
   ctx.drawImage(layer, 0, 0);
+
+  if (brushCursor) {
+    ctx.beginPath();
+    ctx.arc(brushCursor.x, brushCursor.y, brushCursor.r, 0, Math.PI * 2);
+    ctx.lineWidth = Math.max(1, W / 300);
+    ctx.strokeStyle = tool === "erase" ? "#ff6b8b" : "#7ef0a0";
+    ctx.stroke();
+  }
 }
 
-cutoutCanvas.addEventListener("click", (e) => {
-  if (!segmentation) return;
+function canvasPoint(e) {
   const rect = cutoutCanvas.getBoundingClientRect();
-  const x = ((e.clientX - rect.left) / rect.width) * segmentation.width;
-  const y = ((e.clientY - rect.top) / rect.height) * segmentation.height;
-  if (toggleHoleAt(segmentation, x, y)) {
+  return {
+    x: ((e.clientX - rect.left) / rect.width) * segmentation.width,
+    y: ((e.clientY - rect.top) / rect.height) * segmentation.height,
+    r: (BRUSH_CSS_PX[brushSize] / rect.width) * segmentation.width,
+  };
+}
+
+function pushUndo() {
+  undoStack.push(snapshotEdits(segmentation));
+  if (undoStack.length > 30) undoStack.shift();
+  undoBtn.disabled = false;
+}
+
+function resetEditor() {
+  undoStack = [];
+  undoBtn.disabled = true;
+  cutoutPhotoSource = null;
+  brushCursor = null;
+}
+
+function setTool(next) {
+  tool = next;
+  for (const b of editTools.querySelectorAll("button[data-tool]")) {
+    b.classList.toggle("active", b.dataset.tool === tool);
+  }
+  brushSizes.hidden = tool === "tap";
+  // While brushing, a finger drag paints instead of scrolling the page.
+  cutoutCanvas.style.touchAction = tool === "tap" ? "manipulation" : "none";
+}
+
+editTools.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-tool]");
+  if (b) setTool(b.dataset.tool);
+});
+
+brushSizes.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-size]");
+  if (!b) return;
+  brushSize = b.dataset.size;
+  for (const x of brushSizes.querySelectorAll("button")) x.classList.toggle("active", x === b);
+});
+
+undoBtn.addEventListener("click", () => {
+  const snap = undoStack.pop();
+  if (!snap || !segmentation) return;
+  restoreEdits(segmentation, snap);
+  undoBtn.disabled = undoStack.length === 0;
+  rebuildModel({ resetView: false, maskChanged: true });
+  drawCutout();
+});
+
+let stroke = null; // active brush drag: {pointerId, x, y}
+let redrawQueued = false;
+function queueRedraw() {
+  if (redrawQueued) return;
+  redrawQueued = true;
+  requestAnimationFrame(() => {
+    redrawQueued = false;
+    drawCutout();
+  });
+}
+
+cutoutCanvas.addEventListener("pointerdown", (e) => {
+  if (!segmentation || tool === "tap") return;
+  e.preventDefault();
+  cutoutCanvas.setPointerCapture(e.pointerId);
+  const p = canvasPoint(e);
+  pushUndo();
+  paintStroke(segmentation, p.x, p.y, p.x, p.y, p.r, tool === "restore" ? 1 : -1);
+  stroke = { pointerId: e.pointerId, x: p.x, y: p.y };
+  brushCursor = p;
+  queueRedraw();
+});
+
+cutoutCanvas.addEventListener("pointermove", (e) => {
+  if (!stroke || e.pointerId !== stroke.pointerId) return;
+  const p = canvasPoint(e);
+  paintStroke(segmentation, stroke.x, stroke.y, p.x, p.y, p.r, tool === "restore" ? 1 : -1);
+  stroke.x = p.x;
+  stroke.y = p.y;
+  brushCursor = p;
+  queueRedraw();
+});
+
+function endStroke(e) {
+  if (!stroke || e.pointerId !== stroke.pointerId) return;
+  stroke = null;
+  brushCursor = null;
+  // The 3D model is only rebuilt once per stroke; the cut-out view updated live.
+  rebuildModel({ resetView: false, maskChanged: true });
+  drawCutout();
+}
+cutoutCanvas.addEventListener("pointerup", endStroke);
+cutoutCanvas.addEventListener("pointercancel", endStroke);
+
+cutoutCanvas.addEventListener("click", (e) => {
+  if (!segmentation || tool !== "tap") return;
+  const p = canvasPoint(e);
+  const before = snapshotEdits(segmentation);
+  if (toggleHoleAt(segmentation, p.x, p.y)) {
+    undoStack.push(before);
+    undoBtn.disabled = false;
     rebuildModel({ resetView: false, maskChanged: true });
     drawCutout();
   }

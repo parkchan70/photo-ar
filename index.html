@@ -48,7 +48,21 @@
 
       <div id="previewWrap" hidden>
         <h2 class="section-title">오려낸 모양</h2>
-        <p class="hint">흰 종이가 남아 있으면 그 부분을 탭하세요. 지워져요.<br />다시 탭하면 되살아나요.</p>
+        <p class="hint">
+          👆 탭: 흰 부분을 누르면 지워지고, 분홍색 부분을 누르면 되살아나요.<br />
+          🖌 되살리기 · 🧽 지우기: 손가락으로 문지른 곳만 살리거나 지워요.
+        </p>
+        <div id="editTools" class="edit-tools">
+          <button data-tool="tap" class="active">👆 탭</button>
+          <button data-tool="restore">🖌 되살리기</button>
+          <button data-tool="erase">🧽 지우기</button>
+          <button id="undoBtn" class="undo-btn" title="되돌리기" disabled>↶</button>
+        </div>
+        <div id="brushSizes" class="brush-sizes" hidden>
+          <span>붓 굵기</span>
+          <button data-size="thin" class="active">가늘게</button>
+          <button data-size="thick">굵게</button>
+        </div>
         <canvas id="cutoutCanvas"></canvas>
 
         <h2 class="section-title">3D 미리보기</h2>
