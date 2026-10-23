@@ -2,10 +2,12 @@
  * Android browsers where AR capture doesn't work and we should offer Chrome:
  *  - "samsung": Samsung Internet runs WebXR AR but never grants camera-access.
  *  - "naver" / "kakao": NAVER and KakaoTalk open links in an Android WebView (no WebXR).
- * Returns null elsewhere (including iOS, where Chrome can't help).
+ * Returns null elsewhere (including iOS and desktop PCs, where Chrome can't help).
  */
 export function detectNonChromeBrowser(ua = navigator.userAgent) {
-  if (!/Android/i.test(ua)) return null;
+  // Android tablets in "desktop site" mode (the Galaxy Tab default) report
+  // "X11; Linux x86_64" instead of "Android" but keep the browser's own token.
+  if (!/Android|X11; Linux/i.test(ua)) return null;
   if (/NAVER\(inapp/i.test(ua)) return "naver";
   if (/KAKAOTALK/i.test(ua)) return "kakao";
   if (/SamsungBrowser\//.test(ua)) return "samsung";

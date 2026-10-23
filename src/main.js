@@ -555,10 +555,17 @@ const CLEAN_SHOT_SECONDS = 5;
 
 function showNoCapturePanel(code) {
   const version = (navigator.userAgent.match(/Chrome\/(\d+)/) || [])[1] || "?";
-  $("noCaptureText").textContent = isSamsungInternet
-    ? "삼성 인터넷은 AR 사진 촬영을 지원하지 않아요. Chrome에서 열면 📸 버튼으로 바로 저장돼요."
-    : "이 브라우저는 AR 사진 촬영을 지원하지 않아요.";
-  $("noCaptureCode").textContent = `(코드: ${code}, ${isSamsungInternet ? "Samsung Internet" : "Chrome"} ${version})`;
+  // AR sessions only run on Android, so Chrome is always a way out here,
+  // unless this already is Google Chrome (then the camera permission was refused).
+  const isGoogleChrome = !!navigator.userAgentData?.brands?.some((b) => b.brand === "Google Chrome");
+  noCapturePanel.querySelector(".chrome-link").hidden = isGoogleChrome;
+  $("noCaptureText").textContent = isGoogleChrome
+    ? "카메라 권한이 허용되지 않아 AR 사진을 찍을 수 없어요. AR을 끝내고 다시 시작할 때 카메라를 허용해주세요."
+    : isSamsungInternet
+      ? "삼성 인터넷은 AR 사진 촬영을 지원하지 않아요. Chrome에서 열면 📸 버튼으로 바로 저장돼요."
+      : "이 브라우저는 AR 사진 촬영을 지원하지 않아요. Chrome에서 열면 📸 버튼으로 바로 저장돼요.";
+  const name = isGoogleChrome ? "Chrome" : isSamsungInternet ? "Samsung Internet" : "Chromium";
+  $("noCaptureCode").textContent = `(코드: ${code}, ${name} ${version})`;
   $("cleanShotBtn").textContent = `버튼 숨기고 직접 캡처 (${CLEAN_SHOT_SECONDS}초)`;
   noCapturePanel.hidden = false;
 }
