@@ -11,6 +11,7 @@ const MAX_TEXTURE_SIDE = 2048;
  * @returns {HTMLCanvasElement}
  */
 export function buildCleanTexture(image, seg) {
+  if (seg.digital) return digitalTexture(image, seg);
   const { width: W, height: H, mask, ink, strokes, holeLabels, holes, unit } = seg;
 
   // Coarse "may repaint here" map; the actual paper-vs-crayon decision is made
@@ -64,6 +65,59 @@ export function buildCleanTexture(image, seg) {
     }
   }
   octx.putImageData(full, 0, 0);
+  return out;
+}
+
+/**
+ * Digital images are used as drawn (no crayon/paper repaint). Outside the
+ * cut-out, the character's edge colors are smeared outward, so the model's
+ * rim samples the character instead of checkerboard, white, or transparent.
+ */
+function digitalTexture(image, seg) {
+  const srcW = image.naturalWidth || image.width;
+  const srcH = image.naturalHeight || image.height;
+  const s = Math.min(1, MAX_TEXTURE_SIDE / Math.max(srcW, srcH));
+  const FW = Math.round(srcW * s), FH = Math.round(srcH * s);
+  const canvas = () => {
+    const c = document.createElement("canvas");
+    c.width = FW;
+    c.height = FH;
+    return c;
+  };
+
+  // One pixel inside the outline: the outermost ring is the image's own
+  // anti-aliasing (character blended with background) and would show as a fringe.
+  const { width: W, height: H, mask } = seg;
+  const maskSmall = document.createElement("canvas");
+  maskSmall.width = W;
+  maskSmall.height = H;
+  const md = new ImageData(W, H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = y * W + x;
+      const inner = mask[i] &&
+        (x === 0 || mask[i - 1]) && (x === W - 1 || mask[i + 1]) &&
+        (y === 0 || mask[i - W]) && (y === H - 1 || mask[i + W]);
+      md.data[i * 4 + 3] = inner ? 255 : 0;
+    }
+  }
+  maskSmall.getContext("2d").putImageData(md, 0, 0);
+
+  const character = canvas();
+  const cctx = character.getContext("2d");
+  cctx.drawImage(image, 0, 0, FW, FH);
+  cctx.globalCompositeOperation = "destination-in";
+  cctx.drawImage(maskSmall, 0, 0, FW, FH);
+
+  const out = canvas();
+  const ctx = out.getContext("2d");
+  const step = Math.max(1, Math.round(Math.max(FW, FH) / 300));
+  for (let r = 6 * step; r > 0; r -= step) {
+    for (const [dx, dy] of [[r, 0], [-r, 0], [0, r], [0, -r], [r, r], [-r, r], [r, -r], [-r, -r]]) {
+      ctx.drawImage(character, dx, dy);
+    }
+  }
+  ctx.drawImage(character, 0, 0);
   return out;
 }
 

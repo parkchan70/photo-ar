@@ -27,6 +27,16 @@ export function segmentDrawing(image, maxSize = 512) {
   const px = ctx.getImageData(0, 0, W, H).data;
 
   const N = W * H;
+  const unit = Math.max(1, Math.round(Math.max(W, H) / 170));
+
+  // Digital pictures (AI/illustration exports) have a transparent, flat or
+  // fake-checkerboard background instead of paper; cut those by color.
+  const digitalBg = detectDigitalBackground(px, W, H);
+  if (digitalBg) {
+    const seg = segmentDigital(px, W, H, unit, digitalBg);
+    if (seg) return seg;
+  }
+
   const gray = new Float32Array(N);
   const sat = new Float32Array(N);
   for (let i = 0; i < N; i++) {
@@ -39,7 +49,6 @@ export function segmentDrawing(image, maxSize = 512) {
   const meanGray = boxMean(gray, W, H, radius);
   const meanSat = boxMean(sat, W, H, radius);
 
-  const unit = Math.max(1, Math.round(Math.max(W, H) / 170));
   // Only look for ink on the sheet itself; otherwise the table just outside
   // the paper edge reads as "darker than its surroundings" and wins.
   const paper = erode(paperRegion(gray, W, H), W, H, unit * 2);
@@ -79,6 +88,20 @@ export function segmentDrawing(image, maxSize = 512) {
     };
   });
 
+  const seg = finishSegmentation(W, H, unit, strokes, holeLabels, holes, {
+    // Used by texture cleanup to repaint paper showing between crayon strokes.
+    ink: fg, smallHole, paperGray, paperSat,
+  });
+  if (!seg) throw new Error("사진에서 그림을 찾지 못했어요. 밝은 종이 위의 그림을 가까이서 찍어주세요.");
+  return seg;
+}
+
+/**
+ * Shared tail: adds the tappable "open holes", brush state and the mask.
+ * Returns null if almost nothing is left.
+ */
+function finishSegmentation(W, H, unit, strokes, holeLabels, holes, extra) {
+  const N = W * H;
   // Kids' outlines often have small breaks, so the paper inside leaks into the
   // open sheet and isn't a "hole". Closing the strokes harder bridges those
   // breaks; regions enclosed only then are offered as tappable "open holes".
@@ -94,14 +117,148 @@ export function segmentDrawing(image, maxSize = 512) {
     width: W, height: H, strokes, holeLabels, holes, openLabels, openHoles, mask: null,
     // Brush edits: 1 = force keep, -1 = force remove, 0 = automatic.
     paint: new Int8Array(N),
-    // Used by texture cleanup to repaint paper showing between crayon strokes.
-    ink: fg, unit, smallHole, paperGray, paperSat,
+    unit,
+    ...extra,
   };
   rebuildMask(seg);
   let area = 0;
   for (let i = 0; i < N; i++) area += seg.mask[i];
-  if (area < N * 0.005) {
-    throw new Error("사진에서 그림을 찾지 못했어요. 밝은 종이 위의 그림을 가까이서 찍어주세요.");
+  return area < N * 0.005 ? null : seg;
+}
+
+/**
+ * Recognizes a digital background from the image border:
+ *  - {kind: "alpha"}: mostly transparent border (a real transparent PNG)
+ *  - {kind: "color", colors}: border is almost exactly one flat color, or the
+ *    two colors of a fake "transparency" checkerboard baked into the pixels.
+ * Photos of paper have noise and lighting falloff at the border, so they
+ * don't come close to this and keep the paper path.
+ */
+function detectDigitalBackground(px, W, H) {
+  const border = [];
+  for (let x = 0; x < W; x++) for (const y of [0, 1, H - 2, H - 1]) border.push((y * W + x) * 4);
+  for (let y = 2; y < H - 2; y++) for (const x of [0, 1, W - 2, W - 1]) border.push((y * W + x) * 4);
+
+  let transparent = 0;
+  for (const k of border) if (px[k + 3] < 128) transparent++;
+  if (transparent > 0.6 * border.length) return { kind: "alpha" };
+
+  // Two most common colors (coarse 16-level bins), refined to their mean.
+  const bins = new Map();
+  for (const k of border) {
+    const key = (px[k] >> 4) * 256 + (px[k + 1] >> 4) * 16 + (px[k + 2] >> 4);
+    const b = bins.get(key) || { n: 0, r: 0, g: 0, b: 0 };
+    b.n++; b.r += px[k]; b.g += px[k + 1]; b.b += px[k + 2];
+    bins.set(key, b);
+  }
+  const colors = [...bins.values()]
+    .sort((a, b) => b.n - a.n)
+    .slice(0, 2)
+    .filter((b) => b.n >= 0.1 * border.length)
+    .map((b) => [b.r / b.n, b.g / b.n, b.b / b.n]);
+  if (colors.length === 0) return null;
+
+  const share = (cs, maxDist) => {
+    let n = 0;
+    for (const k of border) if (cs.some((c) => colorDist(px, k, c) <= maxDist)) n++;
+    return n / border.length;
+  };
+
+  // Fake transparency: two colors that really alternate like a checkerboard
+  // along the top and bottom edges (a desk or paper never does this).
+  if (colors.length === 2 && share(colors, 6) >= 0.8) {
+    let switches = 0;
+    for (const y of [0, H - 1]) {
+      let prev = 0;
+      for (let x = 0; x < W; x++) {
+        const k = (y * W + x) * 4;
+        const d0 = colorDist(px, k, colors[0]), d1 = colorDist(px, k, colors[1]);
+        const cur = Math.min(d0, d1) > 6 ? 0 : d0 < d1 ? 1 : 2;
+        if (cur && prev && cur !== prev) switches++;
+        if (cur) prev = cur;
+      }
+    }
+    if (switches >= 8) return { kind: "color", colors };
+  }
+
+  // Flat background: essentially every border pixel is the same exact color.
+  // Photos always drift a few levels across the frame (lighting, lens falloff).
+  if (share([colors[0]], 3) >= 0.95) return { kind: "color", colors: [colors[0]] };
+  return null;
+}
+
+function colorDist(px, k, c) {
+  return Math.hypot(px[k] - c[0], px[k + 1] - c[1], px[k + 2] - c[2]);
+}
+
+/** Distance from a pixel's color to the line segment between two colors (checkerboard blends lie on it). */
+function distToSegment(px, k, a, b) {
+  const d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const len2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2] || 1;
+  const t = Math.min(1, Math.max(0,
+    ((px[k] - a[0]) * d[0] + (px[k + 1] - a[1]) * d[1] + (px[k + 2] - a[2]) * d[2]) / len2));
+  return Math.hypot(px[k] - (a[0] + t * d[0]), px[k + 1] - (a[1] + t * d[1]), px[k + 2] - (a[2] + t * d[2]));
+}
+
+/**
+ * Character = everything that isn't background-colored. Background colors
+ * fully surrounded by the character (white eyes, or a gap between an arm and
+ * the body) become tappable holes: kept by default unless they clearly are
+ * background (transparent, the checkerboard pattern, or a big flat patch).
+ */
+function segmentDigital(px, W, H, unit, bg) {
+  const N = W * H;
+  const TOL = 14; // tight enough that cream/white character colors aren't taken for a gray checker
+  const isBg = new Uint8Array(N);
+  const which = new Uint8Array(N); // checkerboard: which of the two colors (1 or 2)
+  for (let i = 0; i < N; i++) {
+    const k = i * 4;
+    if (bg.kind === "alpha") {
+      isBg[i] = px[k + 3] < 128 ? 1 : 0;
+      continue;
+    }
+    const [a, b] = bg.colors;
+    const d = b ? distToSegment(px, k, a, b) : colorDist(px, k, a);
+    isBg[i] = d <= TOL ? 1 : 0;
+    if (isBg[i] && b) which[i] = colorDist(px, k, a) <= colorDist(px, k, b) ? 1 : 2;
+  }
+  const strokes = new Uint8Array(N);
+  for (let i = 0; i < N; i++) strokes[i] = isBg[i] ? 0 : 1;
+
+  const { labels: holeLabels, regions } = labelRegions(strokes, W, H, 0);
+  const counts = regions.map(() => [0, 0]);
+  for (let i = 0; i < N; i++) {
+    const id = holeLabels[i];
+    if (id >= 0 && which[i]) counts[id][which[i] - 1]++;
+  }
+  const holes = regions.map((r, id) => {
+    let background;
+    if (bg.kind === "alpha") background = true;
+    else if (bg.colors.length === 2) {
+      // The fake checkerboard shows both of its colors; a white eye shows one.
+      background = Math.min(counts[id][0], counts[id][1]) >= 0.15 * r.area;
+    } else {
+      background = r.area > 0.01 * N; // big flat patch = gap; small = eye/highlight
+    }
+    return {
+      area: r.area,
+      toggleable: !r.touchesBorder && r.area < 0.4 * N,
+      filled: !r.touchesBorder && !background,
+    };
+  });
+
+  const seg = finishSegmentation(W, H, unit, strokes, holeLabels, holes, {
+    digital: bg.kind,
+    ink: strokes,
+    smallHole: 0,
+  });
+  if (!seg) return null;
+  // A "character" filling most of the frame means this was really a photo
+  // (e.g. a sheet of paper on a plain desk); let the paper path handle it.
+  if (bg.kind !== "alpha") {
+    let area = 0;
+    for (let i = 0; i < N; i++) area += seg.mask[i];
+    if (area > 0.6 * N) return null;
   }
   return seg;
 }
