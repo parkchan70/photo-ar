@@ -1,9 +1,10 @@
 import { segmentDrawing, toggleHoleAt } from "./segment.js";
 import { buildInflatedMesh, disposeModel } from "./inflate.js";
 import { buildCleanTexture } from "./texture.js";
-import { detectNonChromeBrowser, chromeIntentUrl } from "./browser.js";
+import { detectNonChromeBrowser, chromeIntentUrl, detectIosInApp, kakaoOpenExternalUrl } from "./browser.js";
 import { PreviewScene } from "./previewScene.js";
 import { ARScene } from "./arScene.js";
+import { supportsQuickLook, exportUsdz } from "./quicklook.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -49,13 +50,67 @@ if (inAppNames[nonChromeBrowser]) {
   $("browserTipFallback").hidden = false;
 }
 
+const iosInApp = detectIosInApp();
+if (iosInApp) {
+  $("browserTip").hidden = false;
+  $("browserTipText").innerHTML =
+    `${inAppNames[iosInApp]}에서는 아이폰 AR 화면이 열리지 않을 수 있어요.<br />Safari에서 열어주세요.`;
+  const link = $("browserTip").querySelector(".chrome-link");
+  if (iosInApp === "kakao") {
+    link.textContent = "Safari로 열기";
+    link.href = kakaoOpenExternalUrl();
+    link.hidden = false;
+  }
+  $("browserTipFallback").textContent =
+    "버튼이 없거나 안 열리면, 화면의 메뉴(⋯)에서 'Safari로 열기' 또는 '다른 브라우저로 열기'를 눌러주세요.";
+  $("browserTipFallback").hidden = false;
+}
+
+// iPhone/iPad: no WebXR, so "AR로 내 공간에 놓기" becomes a link that opens
+// the model in Apple's AR viewer (it has its own move/rotate/scale + shutter).
+const quickLook = supportsQuickLook();
+const quickLookLink = $("quickLookLink");
+const QUICK_LOOK_HINT =
+  "아이폰에서는 애플 AR 화면이 열려요. 손가락으로 옮기고 돌리고 크기를 바꿀 수 있고, 아래 흰 셔터 버튼을 누르면 '사진' 앱에 저장돼요.";
+
 let arSupported = false;
-ARScene.isSupported().then((supported) => {
-  arSupported = supported;
-  arSupportText.textContent = supported
-    ? ""
-    : "이 브라우저/기기는 WebXR AR을 지원하지 않아요. Android Chrome 최신 버전에서 열어보세요.";
-});
+if (quickLook) {
+  goArBtn.hidden = true;
+  quickLookLink.hidden = false;
+  arSupportText.textContent = QUICK_LOOK_HINT;
+} else {
+  ARScene.isSupported().then((supported) => {
+    arSupported = supported;
+    arSupportText.textContent = supported
+      ? ""
+      : "이 브라우저/기기는 WebXR AR을 지원하지 않아요. Android Chrome 최신 버전에서 열어보세요.";
+  });
+}
+
+let usdzUrl = null;
+let usdzVersion = 0;
+
+/** Re-exports the current model for AR Quick Look; the link is unusable until done. */
+async function refreshQuickLook() {
+  const version = ++usdzVersion;
+  quickLookLink.classList.add("preparing");
+  quickLookLink.removeAttribute("href");
+  try {
+    const url = await exportUsdz(modelGroup);
+    if (version !== usdzVersion) {
+      URL.revokeObjectURL(url); // a newer model replaced this one meanwhile
+      return;
+    }
+    if (usdzUrl) URL.revokeObjectURL(usdzUrl);
+    usdzUrl = url;
+    quickLookLink.href = url;
+    quickLookLink.classList.remove("preparing");
+    arSupportText.textContent = QUICK_LOOK_HINT;
+  } catch (err) {
+    console.error(err);
+    if (version === usdzVersion) arSupportText.textContent = "AR 파일을 만들지 못했어요: " + (err?.message || err);
+  }
+}
 
 let arScene = null;
 function getArScene() {
@@ -94,6 +149,9 @@ fileInput.addEventListener("change", async () => {
   });
 
   sourceImage = img;
+  usdzVersion++; // drop any in-flight export of the previous photo
+  quickLookLink.classList.add("preparing");
+  quickLookLink.removeAttribute("href");
   previewImg.src = url;
   previewImg.hidden = false;
   uploadPlaceholder.hidden = true;
@@ -115,6 +173,7 @@ function rebuildModel({ resetView, maskChanged }) {
   modelGroup = next;
   preview.setModel(modelGroup, { resetView });
   if (prev) disposeModel(prev);
+  if (quickLook) refreshQuickLook();
 }
 
 convertBtn.addEventListener("click", async () => {

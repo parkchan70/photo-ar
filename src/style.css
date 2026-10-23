@@ -82,6 +82,13 @@ header p { margin: 0 0 20px; color: var(--muted); font-size: 14px; line-height: 
 }
 .primary-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* AR Quick Look link: its only child must be an <img>, so the label is CSS. */
+.ql-btn { display: block; position: relative; text-align: center; text-decoration: none; }
+.ql-btn img { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.ql-btn::after { content: "AR로 내 공간에 놓기"; }
+.ql-btn.preparing { opacity: 0.4; pointer-events: none; }
+.ql-btn.preparing::after { content: "AR 준비 중..."; }
+
 .status-text {
   min-height: 18px;
   font-size: 13px;

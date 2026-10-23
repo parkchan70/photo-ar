@@ -55,6 +55,8 @@
         <canvas id="previewCanvas"></canvas>
         <p class="hint">손가락/마우스로 드래그하면 회전해서 확인할 수 있어요</p>
         <button id="goArBtn" class="primary-btn" disabled>AR로 내 공간에 놓기</button>
+        <!-- iPhone/iPad: Safari opens rel="ar" links in AR Quick Look; it requires an <img> as the only child. -->
+        <a id="quickLookLink" class="primary-btn ql-btn preparing" rel="ar" hidden><img alt="" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" /></a>
         <p id="arSupportText" class="status-text"></p>
       </div>
     </section>

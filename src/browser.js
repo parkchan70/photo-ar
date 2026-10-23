@@ -12,6 +12,23 @@ export function detectNonChromeBrowser(ua = navigator.userAgent) {
   return null;
 }
 
+/**
+ * iPhone/iPad in-app browsers ("naver" / "kakao") where Apple's AR viewer may
+ * not open; those users should switch to Safari. Null elsewhere.
+ * (iPadOS Safari reports itself as a Mac, but in-app browsers keep "iPad".)
+ */
+export function detectIosInApp(ua = navigator.userAgent) {
+  if (!/iPhone|iPad|iPod/.test(ua)) return null;
+  if (/NAVER\(inapp/i.test(ua)) return "naver";
+  if (/KAKAOTALK/i.test(ua)) return "kakao";
+  return null;
+}
+
+/** KakaoTalk's documented scheme for opening a page in the phone's default browser. */
+export function kakaoOpenExternalUrl(loc = location) {
+  return `kakaotalk://web/openExternal?url=${encodeURIComponent(loc.href)}`;
+}
+
 /** Android intent link that opens the current page in Chrome (Play Store if Chrome is missing). */
 export function chromeIntentUrl(loc = location) {
   return (
