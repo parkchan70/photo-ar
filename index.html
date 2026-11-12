@@ -72,6 +72,7 @@
         <!-- iPhone/iPad: Safari opens rel="ar" links in AR Quick Look; it requires an <img> as the only child. -->
         <a id="quickLookLink" class="primary-btn ql-btn preparing" rel="ar" hidden><img alt="" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" /></a>
         <p id="arSupportText" class="status-text"></p>
+        <button id="goSelfieBtn" class="primary-btn secondary-btn" disabled>🤳 셀카로 같이 찍기</button>
       </div>
     </section>
 
@@ -80,6 +81,7 @@
       <!-- three.js renderer canvas가 여기 들어감 -->
       <div id="ar-overlay">
         <p id="arHint" class="ar-hint">바닥이나 벽을 비추면 원이 나타나요. 탭해서 놓으세요.</p>
+        <button id="camSwitchBtn" class="ar-ui cam-switch" title="카메라 전환">⇆ 앞 카메라</button>
         <div id="modeToggle" class="ar-ui mode-toggle" hidden>
           <button data-mode="move" class="active">✋ 이동</button>
           <button data-mode="rotate">🔄 회전</button>

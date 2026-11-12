@@ -6,6 +6,7 @@ import { buildCleanTexture } from "./texture.js";
 import { detectNonChromeBrowser, chromeIntentUrl, detectIosInApp, kakaoOpenExternalUrl } from "./browser.js";
 import { PreviewScene } from "./previewScene.js";
 import { ARScene } from "./arScene.js";
+import { SelfieScene } from "./selfieScene.js";
 import { supportsQuickLook, exportUsdz } from "./quicklook.js";
 
 const $ = (id) => document.getElementById(id);
@@ -31,6 +32,13 @@ const captureBtn = $("captureBtn");
 const resetBtn = $("resetBtn");
 const exitArBtn = $("exitArBtn");
 const modeToggle = $("modeToggle");
+const goSelfieBtn = $("goSelfieBtn");
+const camSwitchBtn = $("camSwitchBtn");
+
+// Which camera the AR screen is showing: "xr" = WebXR AR (rear camera, model
+// anchored in the room), "selfie" = getUserMedia camera with the model on top.
+let camMode = null;
+let switchingCamera = false; // ending WebXR to switch cameras, not to leave
 
 let sourceImage = null; // HTMLImageElement
 let segmentation = null; // from segmentDrawing(); toggleHoleAt() edits it in place
@@ -128,11 +136,39 @@ function getArScene() {
         }
       },
       onSessionEnd: () => {
+        if (switchingCamera) {
+          switchingCamera = false;
+          return;
+        }
         exitArUI();
       },
     });
   }
   return arScene;
+}
+
+let selfie = null;
+function getSelfie() {
+  if (!selfie) selfie = new SelfieScene({ containerEl: arScreenEl, overlayEl: arOverlay });
+  return selfie;
+}
+
+function cameraErrorText(err) {
+  if (err?.name === "NotAllowedError") {
+    return "카메라 사용이 허용되지 않았어요. 주소창 왼쪽의 자물쇠 아이콘을 눌러 카메라를 '허용'으로 바꾼 뒤 다시 눌러주세요.";
+  }
+  if (err?.name === "NotFoundError" || err?.name === "OverconstrainedError") {
+    return "사용할 수 있는 카메라를 찾지 못했어요.";
+  }
+  if (err?.name === "NotReadableError") {
+    return "다른 앱이 카메라를 쓰고 있어요. 그 앱을 닫고 다시 시도해주세요.";
+  }
+  return "카메라를 열지 못했어요: " + (err?.message || err);
+}
+
+function updateCamSwitch() {
+  const front = camMode === "selfie" && selfie?.facing === "user";
+  camSwitchBtn.textContent = front ? "⇆ 뒤 카메라" : "⇆ 앞 카메라";
 }
 
 // ---------- Upload ----------
@@ -160,6 +196,7 @@ fileInput.addEventListener("change", async () => {
   convertBtn.disabled = false;
   previewWrap.hidden = true;
   goArBtn.disabled = true;
+  goSelfieBtn.disabled = true;
   statusText.textContent = "";
 });
 
@@ -194,6 +231,7 @@ convertBtn.addEventListener("click", async () => {
     previewWrap.hidden = false;
     drawCutout();
     goArBtn.disabled = !arSupported;
+    goSelfieBtn.disabled = !SelfieScene.isSupported();
     statusText.textContent = "완료! 아래 미리보기를 돌려서 앞뒤를 확인해보세요.";
   } catch (err) {
     console.error(err);
@@ -378,20 +416,31 @@ cutoutCanvas.addEventListener("click", (e) => {
 });
 
 // ---------- Enter AR ----------
-goArBtn.addEventListener("click", async () => {
-  if (!modelGroup) return;
+goArBtn.addEventListener("click", () => {
+  if (modelGroup) enterXr();
+});
+
+goSelfieBtn.addEventListener("click", () => {
+  if (modelGroup) enterSelfie("user");
+});
+
+/** Must be called straight from a tap: requestSession needs the user activation. */
+async function enterXr() {
   const scene = getArScene();
   modelGroup.position.set(0, 0, 0);
   modelGroup.rotation.set(0, 0, 0);
   modelGroup.scale.setScalar(0.4); // ~40cm tall/wide in the room to start
   scene.setModel(modelGroup); // moves it out of the preview scene automatically
 
+  camMode = "xr";
   setupScreen.classList.remove("active");
   arScreenEl.classList.add("active");
   arHint.hidden = false;
   arControls.hidden = true;
   modeToggle.hidden = true;
+  camSwitchBtn.hidden = !SelfieScene.isSupported();
   setMode("move");
+  updateCamSwitch();
 
   try {
     await scene.start();
@@ -400,9 +449,65 @@ goArBtn.addEventListener("click", async () => {
     alert("AR 세션을 시작하지 못했어요: " + (err?.message || err));
     exitArUI();
   }
+}
+
+async function enterSelfie(facing) {
+  const s = getSelfie();
+  if (modelGroup.parent !== s.scene) s.setModel(modelGroup);
+  modelGroup.visible = true;
+
+  camMode = "selfie";
+  setupScreen.classList.remove("active");
+  arScreenEl.classList.add("active");
+  arHint.hidden = true;
+  arControls.hidden = false;
+  modeToggle.hidden = false;
+  camSwitchBtn.hidden = false;
+  setMode("move");
+
+  try {
+    await s.start(facing);
+    updateCamSwitch();
+    showToast("캐릭터를 끌어서 옮기고, 두 손가락을 벌리거나 오므려 크기를 바꿔요. '회전'을 누르면 돌릴 수 있어요. 📸를 누르면 찍혀요.", 5000);
+  } catch (err) {
+    console.error(err);
+    alert(cameraErrorText(err));
+    exitArUI();
+  }
+}
+
+camSwitchBtn.addEventListener("click", async () => {
+  if (!modelGroup) return;
+  camSwitchBtn.disabled = true;
+  try {
+    if (camMode === "xr") {
+      // WebXR only uses the rear camera: leave it and open the front camera.
+      switchingCamera = true;
+      await arScene.end();
+      await enterSelfie("user");
+    } else if (camMode === "selfie" && selfie.facing === "user" && arSupported) {
+      // Back to real AR (anchored in the room). Stop the front camera first,
+      // synchronously, so requestSession still runs inside this tap.
+      selfie.stop();
+      await enterXr();
+    } else if (camMode === "selfie") {
+      // No WebXR (iPhone, PC): flip between front and rear camera.
+      await selfie.start(selfie.facing === "user" ? "environment" : "user");
+      updateCamSwitch();
+    }
+  } catch (err) {
+    console.error(err);
+    alert(cameraErrorText(err));
+    exitArUI();
+  } finally {
+    camSwitchBtn.disabled = false;
+  }
 });
 
 function exitArUI() {
+  if (selfie?.running) selfie.stop();
+  camMode = null;
+  switchingCamera = false;
   arScreenEl.classList.remove("active");
   setupScreen.classList.add("active");
   captureSheet.hidden = true;
@@ -419,14 +524,16 @@ function exitArUI() {
 }
 
 exitArBtn.addEventListener("click", async () => {
-  if (arScene) await arScene.end();
+  if (camMode === "selfie") exitArUI();
+  else if (arScene) await arScene.end();
 });
 
 function setMode(mode) {
   for (const b of modeToggle.querySelectorAll("button")) {
     b.classList.toggle("active", b.dataset.mode === mode);
   }
-  if (arScene) arScene.setInteractionMode(mode);
+  if (camMode === "selfie") selfie.setInteractionMode(mode);
+  else if (arScene) arScene.setInteractionMode(mode);
 }
 modeToggle.addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-mode]");
@@ -434,7 +541,8 @@ modeToggle.addEventListener("click", (e) => {
 });
 
 resetBtn.addEventListener("click", () => {
-  if (arScene) arScene.resetPlacement();
+  if (camMode === "selfie") selfie.resetPlacement();
+  else if (arScene) arScene.resetPlacement();
 });
 
 // Taps on our buttons shouldn't also count as an AR "select" (which would
@@ -480,18 +588,24 @@ function saveToDevice(shot) {
 }
 
 captureBtn.addEventListener("click", async () => {
-  if (!arScene) return;
+  if (camMode === "xr" ? !arScene : !selfie) return;
   captureBtn.disabled = true;
   try {
-    const result = await arScene.requestCapture();
-    // Flash only on success (it's DOM-only, so it never lands in the image).
-    if (result.ok) restartAnimation(shutterFlash, "go");
-    if (!result.ok) {
-      if (result.error?.message === "NO_CAMERA_ACCESS") showNoCapturePanel(result.error.code);
-      else showToast("캡처에 실패했어요: " + (result.error?.message || result.error), 8000);
-      return;
+    let blob;
+    if (camMode === "selfie") {
+      blob = await selfie.capture();
+      restartAnimation(shutterFlash, "go");
+    } else {
+      const result = await arScene.requestCapture();
+      // Flash only on success (it's DOM-only, so it never lands in the image).
+      if (result.ok) restartAnimation(shutterFlash, "go");
+      if (!result.ok) {
+        if (result.error?.message === "NO_CAMERA_ACCESS") showNoCapturePanel(result.error.code);
+        else showToast("캡처에 실패했어요: " + (result.error?.message || result.error), 8000);
+        return;
+      }
+      blob = await pixelsToJpeg(result);
     }
-    const blob = await pixelsToJpeg(result);
     if (lastShot) URL.revokeObjectURL(lastShot.url);
     const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
     lastShot = {
@@ -506,7 +620,13 @@ captureBtn.addEventListener("click", async () => {
     shotThumb.hidden = false;
     restartAnimation(shotThumb, "pop");
     shareShotBtn.hidden = !(navigator.canShare && navigator.canShare({ files: [lastShot.file] }));
-    showToast("✓ 사진을 저장했어요 (갤러리 → Download 앨범)", 3000, { success: true });
+    showToast(
+      quickLook
+        ? "✓ 사진을 저장했어요 (파일 앱 → 다운로드). 사진 앱에 넣으려면 썸네일 → 공유 → '이미지 저장'"
+        : "✓ 사진을 저장했어요 (갤러리 → Download 앨범)",
+      quickLook ? 5000 : 3000,
+      { success: true }
+    );
   } catch (err) {
     console.error(err);
     showToast("캡처에 실패했어요: " + (err?.message || err), 6000);
